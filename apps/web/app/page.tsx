@@ -3,17 +3,19 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Bell, Plus, RotateCcw, Server, ShieldCheck } from "lucide-react";
 import { useAuth } from "@/app/providers";
 import { type AlertEvent, type ServerRecord, type Workspace } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/status-pill";
 import { DashboardShell } from "@/components/dashboard-shell";
+import { parseSSE } from "@/lib/sse.mjs";
 
 export default function Home() {
   const router = useRouter();
   const auth = useAuth();
+	const queryClient = useQueryClient();
   const workspaces = useQuery({
     queryKey: ["workspaces"],
     queryFn: () => auth.request<Workspace[]>("/api/v1/workspaces"),
@@ -27,6 +29,34 @@ export default function Home() {
     refetchInterval: 20_000,
   });
   const alerts = useQuery({ queryKey: ["workspace-alerts", workspace?.id], queryFn: () => auth.request<AlertEvent[]>(`/api/v1/alerts?workspace_id=${workspace?.id}`), enabled: Boolean(auth.accessToken && workspace?.id), refetchInterval: 30_000 });
+
+  useEffect(() => {
+	if (!auth.accessToken || !workspace?.id) return;
+	const controller = new AbortController();
+	const apiURL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+	void (async () => {
+		try {
+			const response = await fetch(`${apiURL}/api/v1/workspaces/${workspace.id}/events`, { headers: { Authorization: `Bearer ${auth.accessToken}` }, signal: controller.signal });
+			if (!response.ok || !response.body) return;
+			const reader = response.body.getReader();
+			const decoder = new TextDecoder();
+			let buffer = "";
+			while (!controller.signal.aborted) {
+				const { value, done } = await reader.read();
+				if (done) break;
+				buffer += decoder.decode(value, { stream: true });
+				const parsed = parseSSE<Array<Pick<ServerRecord, "id" | "status" | "last_seen_at">>>(buffer);
+				buffer = parsed.remaining;
+				for (const statuses of parsed.events) {
+					queryClient.setQueryData<ServerRecord[]>(["servers", workspace.id], (current) => current?.map((server) => ({ ...server, ...(statuses.find((status) => status.id === server.id) ?? {}) })));
+				}
+			}
+		} catch (error) {
+			if (!controller.signal.aborted) console.warn("Live server status stream disconnected.", error);
+		}
+	})();
+	return () => controller.abort();
+  }, [auth.accessToken, queryClient, workspace?.id]);
 
   useEffect(() => {
     if (!auth.loading && !auth.user) router.replace("/login");

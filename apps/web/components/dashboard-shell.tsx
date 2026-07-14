@@ -9,7 +9,7 @@ import { type Workspace } from "@/lib/api";
 
 const navigation = [
   { label: "Overview", href: "/", icon: LayoutDashboard },
-  { label: "Servers", href: "/#servers", icon: Boxes },
+  { label: "Servers", href: "/servers", icon: Boxes },
   { label: "Alerts", href: "/alerts", icon: Bell },
   { label: "Integrations", href: "/integrations", icon: Plug },
 ];
@@ -42,7 +42,7 @@ export function DashboardShell({ workspace, title, description, action, children
       </Link>
       <nav className="mt-10 grid gap-1 text-sm">
         {navigation.map((item) => {
-          const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href.split("#")[0]) && item.href !== "/#servers";
+          const active = item.href === "/" ? pathname === "/" : pathname === item.href || pathname.startsWith(`${item.href}/`);
           const Icon = item.icon;
           return <Link key={item.label} href={item.href} className={`flex items-center gap-3 rounded-md px-3 py-2 ${active ? "bg-background text-foreground" : "text-muted hover:bg-background/60 hover:text-foreground"}`}><Icon className="h-4 w-4" />{item.label}</Link>;
         })}

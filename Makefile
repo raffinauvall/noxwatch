@@ -26,6 +26,7 @@ build:
 test:
 	cd apps/api && go test ./...
 	cd agent && go test ./...
+	npm --workspace apps/web run test
 
 lint:
 	test -z "$$(gofmt -l apps/api)"
@@ -39,7 +40,7 @@ migrate-down:
 	cd apps/api && go run ./cmd/api -migrate down
 
 seed:
-	@echo "Seed data starts in Phase 2."
+	cd apps/api && go run ./cmd/seed
 
 agent-build:
 	mkdir -p dist

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, AlertTriangle, ArrowLeft, Bell, Cpu, Database, HardDrive, MemoryStick, Network, RotateCcw } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeft, Ban, Bell, Cpu, Database, HardDrive, MemoryStick, Network, RotateCcw, Trash2, Wrench } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useAuth } from "@/app/providers";
 import { type AlertEvent, type MetricSample, type MetricSnapshot, type ServerRecord } from "@/lib/api";
@@ -18,6 +18,7 @@ export default function ServerPage() {
   const router = useRouter();
   const serverID = useParams<{ serverId: string }>().serverId;
   const [hours, setHours] = useState(24);
+  const [actionError, setActionError] = useState("");
   const server = useQuery({ queryKey: ["server", serverID], queryFn: () => auth.request<ServerRecord>(`/api/v1/servers/${serverID}`), enabled: Boolean(auth.accessToken), refetchInterval: 20_000 });
   const latest = useQuery({ queryKey: ["metrics-latest", serverID], queryFn: () => auth.request<MetricSnapshot>(`/api/v1/servers/${serverID}/metrics/latest`), enabled: Boolean(auth.accessToken), retry: false, refetchInterval: 30_000 });
   const history = useQuery({ queryKey: ["metrics", serverID, hours], queryFn: () => { const to = new Date(); const from = new Date(to.getTime() - hours * 3600_000); return auth.request<MetricSample[]>(`/api/v1/servers/${serverID}/metrics?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}&limit=2000`); }, enabled: Boolean(auth.accessToken) });
@@ -29,6 +30,25 @@ export default function ServerPage() {
   const item = server.data;
   const samples = history.data ?? [];
   const chartData = samples.map((sample) => ({ ...sample, time: new Date(sample.collected_at).getTime() }));
+
+  async function setMaintenance(enabled: boolean) {
+	setActionError("");
+	try { await auth.request(`/api/v1/servers/${serverID}`, { method: "PATCH", body: JSON.stringify({ maintenance: enabled }) }); await server.refetch(); }
+	catch (error) { setActionError(error instanceof Error ? error.message : "Server could not be updated."); }
+  }
+
+  async function revokeAgent() {
+	setActionError("");
+	try { await auth.request(`/api/v1/servers/${serverID}/agent`, { method: "DELETE" }); await server.refetch(); }
+	catch (error) { setActionError(error instanceof Error ? error.message : "Agent could not be revoked."); }
+  }
+
+  async function deleteServer() {
+	if (!window.confirm(`Delete ${item.name} and all of its metric history?`)) return;
+	setActionError("");
+	try { await auth.request(`/api/v1/servers/${serverID}`, { method: "DELETE" }); router.replace("/"); }
+	catch (error) { setActionError(error instanceof Error ? error.message : "Server could not be deleted."); }
+  }
 
   return <main className="min-h-screen bg-background text-foreground">
     <header className="border-b border-panel-border px-5 py-5"><div className="mx-auto flex max-w-7xl items-center justify-between gap-5"><div><Link href="/" className="mb-3 flex items-center gap-2 text-sm text-muted hover:text-foreground"><ArrowLeft className="h-4 w-4" />Overview</Link><div className="flex flex-wrap items-center gap-3"><h1 className="text-2xl font-semibold">{item.name}</h1><StatusPill status={item.status} /></div><p className="mt-2 text-sm text-muted">{item.hostname} · {item.environment} · {item.operating_system} {item.os_version}</p></div><div className="flex rounded-md border border-panel-border p-1">{ranges.map((range) => <button key={range.hours} className={`h-8 min-w-10 px-2 text-xs ${hours === range.hours ? "rounded bg-panel text-foreground" : "text-muted"}`} onClick={() => setHours(range.hours)}>{range.label}</button>)}</div></div></header>
@@ -52,6 +72,7 @@ export default function ServerPage() {
       </section>
 
       <section className="grid gap-3 rounded-lg border border-panel-border bg-panel p-4 text-sm sm:grid-cols-2 xl:grid-cols-4"><Info label="Kernel" value={item.kernel_version} /><Info label="Architecture" value={item.architecture} /><Info label="Agent" value={item.agent_version} /><Info label="Last heartbeat" value={item.last_seen_at ? new Date(item.last_seen_at).toLocaleString() : "Never"} /></section>
+      <section className="flex flex-wrap items-center justify-between gap-4 border-t border-panel-border py-4"><div><h2 className="text-sm font-semibold">Server controls</h2><p className="mt-1 text-xs text-muted">Sensitive changes are workspace-scoped and recorded in the audit log.</p>{actionError && <p className="mt-2 text-xs text-danger" role="alert">{actionError}</p>}</div><div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => setMaintenance(item.status !== "maintenance")}><Wrench className="h-4 w-4" />{item.status === "maintenance" ? "End maintenance" : "Maintenance"}</Button><Button variant="secondary" disabled={item.agent_revoked} onClick={revokeAgent}><Ban className="h-4 w-4" />Revoke agent</Button><Button variant="secondary" className="text-danger" onClick={deleteServer}><Trash2 className="h-4 w-4" />Delete server</Button></div></section>
       <section className="overflow-hidden rounded-lg border border-panel-border bg-panel">
         <div className="flex items-center justify-between border-b border-panel-border px-4 py-3"><div className="flex items-center gap-2"><Bell className="h-4 w-4 text-muted" /><h2 className="text-sm font-semibold">Alert history</h2></div><Link href="/alerts" className="text-xs text-accent hover:underline">Manage rules</Link></div>
         {alerts.isLoading ? <div className="h-24 animate-pulse bg-background/30" /> : alerts.data?.length ? <div className="divide-y divide-panel-border">{alerts.data.slice(0, 20).map((event) => <div key={event.id} className="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_100px_180px] sm:items-center"><div><p className="font-medium">{event.rule_name}</p><p className="mt-1 text-xs text-muted">{event.current_value.toFixed(1)} at {event.threshold.toFixed(1)} threshold</p></div><span className={event.severity === "critical" ? "text-danger" : "text-warning"}>{event.state}</span><time className="text-xs text-muted">{new Date(event.triggered_at).toLocaleString()}</time></div>)}</div> : <p className="p-6 text-sm text-muted">No alert events recorded for this server.</p>}

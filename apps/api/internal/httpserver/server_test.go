@@ -43,6 +43,16 @@ func TestReadyFailureIsGeneric(t *testing.T) {
 	}
 }
 
+func TestPrometheusMetrics(t *testing.T) {
+	srv := New(testConfig(), slog.Default(), nil, func(context.Context) error { return nil })
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "noxwatch_http_requests_total") {
+		t.Fatalf("unexpected metrics response: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func testConfig() config.Config {
 	return config.Config{
 		HTTPAddr:           ":0",

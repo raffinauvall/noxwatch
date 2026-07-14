@@ -246,6 +246,9 @@ func (s *Service) evaluateWithSeverity(ctx context.Context, rule Rule, value flo
 			return err
 		}
 		if state == "firing" {
+			if err := s.syncServerStatus(ctx, rule.ServerID); err != nil {
+				return err
+			}
 			return s.notifyFiring(ctx, rule, event.ID, now)
 		}
 		return nil
@@ -257,13 +260,21 @@ func (s *Service) evaluateWithSeverity(ctx context.Context, rule Rule, value flo
 		if _, err := s.db.Exec(ctx, `UPDATE alert_events SET state='firing',severity=$2,current_value=$3,threshold=$4 WHERE id=$1`, event.ID, severity, value, threshold); err != nil {
 			return err
 		}
+		if err := s.syncServerStatus(ctx, rule.ServerID); err != nil {
+			return err
+		}
 		return s.notifyFiring(ctx, rule, event.ID, now)
 	}
 	if _, err = s.db.Exec(ctx, `UPDATE alert_events SET severity=$2,current_value=$3,threshold=$4 WHERE id=$1`, event.ID, severity, value, threshold); err != nil {
 		return err
 	}
-	if event.State == "firing" && !notified {
-		return s.notifyFiring(ctx, rule, event.ID, now)
+	if event.State == "firing" || event.State == "acknowledged" {
+		if err := s.syncServerStatus(ctx, rule.ServerID); err != nil {
+			return err
+		}
+		if !notified {
+			return s.notifyFiring(ctx, rule, event.ID, now)
+		}
 	}
 	return nil
 }
@@ -283,9 +294,23 @@ func (s *Service) resolve(ctx context.Context, rule Rule, value float64, now tim
 		return err
 	}
 	if previousState == "pending" || !notified {
-		return nil
+		return s.syncServerStatus(ctx, rule.ServerID)
+	}
+	if err := s.syncServerStatus(ctx, rule.ServerID); err != nil {
+		return err
 	}
 	return s.notify(ctx, rule, eventID)
+}
+
+func (s *Service) syncServerStatus(ctx context.Context, serverID string) error {
+	_, err := s.db.Exec(ctx, `UPDATE servers s SET status=CASE
+	 WHEN status='maintenance' THEN status
+	 WHEN last_seen_at IS NULL THEN 'unknown'
+	 WHEN last_seen_at < now()-interval '2 minutes' THEN 'offline'
+	 WHEN EXISTS (SELECT 1 FROM alert_events WHERE server_id=s.id AND state IN ('firing','acknowledged') AND severity='critical') THEN 'degraded'
+	 WHEN EXISTS (SELECT 1 FROM alert_events WHERE server_id=s.id AND state IN ('firing','acknowledged') AND severity='warning') THEN 'warning'
+	 ELSE 'online' END,updated_at=now() WHERE id=$1`, serverID)
+	return err
 }
 
 func (s *Service) notifyFiring(ctx context.Context, rule Rule, eventID string, now time.Time) error {

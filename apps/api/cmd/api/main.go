@@ -15,6 +15,7 @@ import (
 	"github.com/raffinauvall/noxwatch/apps/api/internal/database"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/enrollment"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/httpserver"
+	"github.com/raffinauvall/noxwatch/apps/api/internal/maintenance"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/notifications"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/observability"
 )
@@ -68,6 +69,7 @@ func main() {
 	defer stopMonitor()
 	alertService := alerts.NewService(db, notifications.NewService(db, cfg.AuthSecret, cfg.PublicWebURL, cfg.AppEnv == "development"))
 	go monitorServerStatus(monitorCtx, enrollment.NewService(db), alertService, logger)
+	go runMaintenance(monitorCtx, maintenance.NewService(db, cfg.MetricRetentionDays), logger)
 
 	go func() {
 		logger.Info("api listening", "addr", cfg.HTTPAddr)
@@ -88,6 +90,33 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("api stopped")
+}
+
+func runMaintenance(ctx context.Context, service *maintenance.Service, logger interface {
+	Info(string, ...any)
+	Error(string, ...any)
+}) {
+	run := func() {
+		result, err := service.Run(ctx)
+		if err != nil {
+			if ctx.Err() == nil {
+				logger.Error("retention job failed", "error", err)
+			}
+			return
+		}
+		logger.Info("retention job complete", "metrics_deleted", result.MetricsDeleted, "sessions_deleted", result.SessionsDeleted, "enrollments_deleted", result.EnrollmentsDeleted)
+	}
+	run()
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run()
+		}
+	}
 }
 
 func monitorServerStatus(ctx context.Context, service *enrollment.Service, alertService *alerts.Service, logger interface{ Error(string, ...any) }) {

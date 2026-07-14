@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,8 +27,10 @@ type readyCheck func(context.Context) error
 
 func New(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, ready readyCheck) *http.Server {
 	mux := http.NewServeMux()
+	platform := &platformMetrics{}
 	mux.HandleFunc("GET /health", healthHandler)
 	mux.HandleFunc("GET /ready", readyHandler(logger, ready))
+	mux.HandleFunc("GET /metrics", platform.handler)
 	authHandler := auth.NewHandler(auth.NewService(db, cfg.AuthSecret), cfg, logger)
 	authHandler.RegisterRoutes(mux)
 	workspaces.NewHandler(workspaces.NewService(db), logger).RegisterRoutes(mux, authHandler.Require)
@@ -47,7 +51,7 @@ func New(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, ready readyCh
 	}).RegisterRoutes(mux, authHandler.Require)
 	servers.NewHandler(servers.NewService(db), logger).RegisterRoutes(mux, authHandler.Require)
 
-	handler := recoverer(logger)(requestLogger(logger)(securityHeaders(cfg.AppEnv == "production")(cors(cfg.CORSAllowedOrigins)(bodyLimit(mux)))))
+	handler := recoverer(logger)(requestLogger(logger, platform)(securityHeaders(cfg.AppEnv == "production")(cors(cfg.CORSAllowedOrigins)(bodyLimit(mux)))))
 	return &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           handler,
@@ -136,7 +140,7 @@ func securityHeaders(production bool) func(http.Handler) http.Handler {
 	}
 }
 
-func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
+func requestLogger(logger *slog.Logger, platform *platformMetrics) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id := r.Header.Get("X-Request-ID")
@@ -150,15 +154,37 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			start := time.Now()
 			next.ServeHTTP(rec, r)
+			duration := time.Since(start)
+			platform.requests.Add(1)
+			platform.durationMilliseconds.Add(uint64(duration.Milliseconds()))
+			if rec.status >= 500 {
+				platform.errors.Add(1)
+			}
 			logger.Info("http_request",
 				"request_id", id,
 				"method", r.Method,
 				"route", r.URL.Path,
 				"status", rec.status,
-				"duration_ms", time.Since(start).Milliseconds(),
+				"duration_ms", duration.Milliseconds(),
 			)
 		})
 	}
+}
+
+type platformMetrics struct {
+	requests             atomic.Uint64
+	errors               atomic.Uint64
+	durationMilliseconds atomic.Uint64
+}
+
+func (m *platformMetrics) handler(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	_, _ = w.Write([]byte("# TYPE noxwatch_http_requests_total counter\n"))
+	_, _ = w.Write([]byte("noxwatch_http_requests_total " + strconv.FormatUint(m.requests.Load(), 10) + "\n"))
+	_, _ = w.Write([]byte("# TYPE noxwatch_http_errors_total counter\n"))
+	_, _ = w.Write([]byte("noxwatch_http_errors_total " + strconv.FormatUint(m.errors.Load(), 10) + "\n"))
+	_, _ = w.Write([]byte("# TYPE noxwatch_http_duration_milliseconds_total counter\n"))
+	_, _ = w.Write([]byte("noxwatch_http_duration_milliseconds_total " + strconv.FormatUint(m.durationMilliseconds.Load(), 10) + "\n"))
 }
 
 func recoverer(logger *slog.Logger) func(http.Handler) http.Handler {
@@ -185,6 +211,12 @@ func recoverer(logger *slog.Logger) func(http.Handler) http.Handler {
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
+}
+
+func (r *statusRecorder) Flush() {
+	if flusher, ok := r.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }
 
 func (r *statusRecorder) WriteHeader(status int) {

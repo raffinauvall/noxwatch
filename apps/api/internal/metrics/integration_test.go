@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/enrollment"
+	"github.com/raffinauvall/noxwatch/apps/api/internal/maintenance"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/servers"
 )
 
@@ -70,5 +71,15 @@ func TestIngestionIdempotencyAndIsolationIntegration(t *testing.T) {
 	}
 	if _, err := service.Latest(ctx, outsiderID, agent.ServerID); !errors.Is(err, ErrNotFound) {
 		t.Fatal("outsider could read server metrics")
+	}
+	if _, err := db.Exec(ctx, `UPDATE metric_samples SET collected_at=now()-interval '31 days' WHERE server_id=$1`, agent.ServerID); err != nil {
+		t.Fatal(err)
+	}
+	result, err := maintenance.NewService(db, 30).Run(ctx)
+	if err != nil || result.MetricsDeleted != 1 {
+		t.Fatalf("retention result=%+v err=%v", result, err)
+	}
+	if _, err := service.Latest(ctx, ownerID, agent.ServerID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expired metrics remained: %v", err)
 	}
 }

@@ -59,7 +59,7 @@ func TestAlertLifecycleWebhookAndIsolationIntegration(t *testing.T) {
 	if _, err := db.Exec(ctx, `INSERT INTO workspace_members (workspace_id,user_id,role) VALUES ($1,$2,'owner')`, workspaceID, ownerID); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.QueryRow(ctx, `INSERT INTO servers (workspace_id,name,hostname,environment) VALUES ($1,'api-01','api-01','testing') RETURNING id`, workspaceID).Scan(&serverID); err != nil {
+	if err := db.QueryRow(ctx, `INSERT INTO servers (workspace_id,name,hostname,environment,last_seen_at,status) VALUES ($1,'api-01','api-01','testing',now(),'online') RETURNING id`, workspaceID).Scan(&serverID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -87,6 +87,10 @@ func TestAlertLifecycleWebhookAndIsolationIntegration(t *testing.T) {
 	events, err := service.Events(ctx, ownerID, serverID)
 	if err != nil || len(events) != 1 || events[0].State != "firing" || events[0].Severity != "critical" {
 		t.Fatalf("firing events=%+v err=%v", events, err)
+	}
+	var serverStatus string
+	if err := db.QueryRow(ctx, `SELECT status FROM servers WHERE id=$1`, serverID).Scan(&serverStatus); err != nil || serverStatus != "degraded" {
+		t.Fatalf("server status=%q err=%v", serverStatus, err)
 	}
 	if err := service.EvaluateMetrics(ctx, serverID, t0.Add(70*time.Second), Values{CPU: 10}); err != nil {
 		t.Fatal(err)

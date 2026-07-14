@@ -182,7 +182,11 @@ func (s *Service) Heartbeat(ctx context.Context, credential, serverID string) er
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(ctx, `UPDATE servers SET last_seen_at=$1, status=CASE WHEN status='maintenance' THEN status ELSE 'online' END, updated_at=$1 WHERE id=$2`, s.now().UTC(), identity.ServerID)
+	_, err = s.db.Exec(ctx, `UPDATE servers s SET last_seen_at=$1,status=CASE
+	 WHEN status='maintenance' THEN status
+	 WHEN EXISTS (SELECT 1 FROM alert_events WHERE server_id=s.id AND state IN ('firing','acknowledged') AND severity='critical') THEN 'degraded'
+	 WHEN EXISTS (SELECT 1 FROM alert_events WHERE server_id=s.id AND state IN ('firing','acknowledged') AND severity='warning') THEN 'warning'
+	 ELSE 'online' END,updated_at=$1 WHERE id=$2`, s.now().UTC(), identity.ServerID)
 	return err
 }
 

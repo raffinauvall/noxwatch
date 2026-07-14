@@ -3,29 +3,39 @@ package config
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
 type Config struct {
-	AppEnv             string
-	HTTPAddr           string
-	DatabaseURL        string
-	RedisAddr          string
-	AuthSecret         string
-	PublicWebURL       string
-	CORSAllowedOrigins []string
-	MigrationsDir      string
+	AppEnv              string
+	HTTPAddr            string
+	DatabaseURL         string
+	RedisAddr           string
+	AuthSecret          string
+	PublicWebURL        string
+	CORSAllowedOrigins  []string
+	MigrationsDir       string
+	MetricRetentionDays int
 }
 
 func Load(getenv func(string) string) (Config, error) {
 	cfg := Config{
-		AppEnv:        value(getenv, "APP_ENV", "development"),
-		HTTPAddr:      value(getenv, "HTTP_ADDR", ":8080"),
-		DatabaseURL:   getenv("DATABASE_URL"),
-		RedisAddr:     getenv("REDIS_ADDR"),
-		AuthSecret:    getenv("AUTH_SECRET"),
-		PublicWebURL:  value(getenv, "PUBLIC_WEB_URL", "http://localhost:3000"),
-		MigrationsDir: value(getenv, "MIGRATIONS_DIR", "../../migrations"),
+		AppEnv:              value(getenv, "APP_ENV", "development"),
+		HTTPAddr:            value(getenv, "HTTP_ADDR", ":8080"),
+		DatabaseURL:         getenv("DATABASE_URL"),
+		RedisAddr:           getenv("REDIS_ADDR"),
+		AuthSecret:          getenv("AUTH_SECRET"),
+		PublicWebURL:        value(getenv, "PUBLIC_WEB_URL", "http://localhost:3000"),
+		MigrationsDir:       value(getenv, "MIGRATIONS_DIR", "../../migrations"),
+		MetricRetentionDays: 30,
+	}
+	if raw := strings.TrimSpace(getenv("METRIC_RETENTION_DAYS")); raw != "" {
+		days, err := strconv.Atoi(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("METRIC_RETENTION_DAYS must be an integer")
+		}
+		cfg.MetricRetentionDays = days
 	}
 	if origins := strings.TrimSpace(getenv("CORS_ALLOWED_ORIGINS")); origins != "" {
 		for _, origin := range strings.Split(origins, ",") {
@@ -50,6 +60,9 @@ func (c Config) Validate() error {
 	}
 	if c.MigrationsDir == "" {
 		missing = append(missing, "MIGRATIONS_DIR")
+	}
+	if c.MetricRetentionDays < 7 || c.MetricRetentionDays > 365 {
+		return errors.New("METRIC_RETENTION_DAYS must be between 7 and 365")
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required env: %s", strings.Join(missing, ", "))
