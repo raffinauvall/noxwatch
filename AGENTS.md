@@ -12,6 +12,7 @@ The MVP phases are complete and in hardening/maintenance mode:
 - PostgreSQL schema migrations, Redis readiness, retention, and Docker Compose health checks.
 - Next.js dashboard backed by tenant-scoped API data and live SSE status events.
 - Linux monitoring agent, systemd packaging, and protected local credentials.
+- Local OpenSSH bootstrap with terminal-only password prompts and no stored SSH credentials.
 - README, architecture, agent, and production operations documentation.
 - Argon2id registration/login, rotating refresh sessions, and logout.
 - Owner workspace creation and tenant-isolated reads.

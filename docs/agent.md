@@ -21,6 +21,19 @@ The default build uses `CGO_ENABLED=0` and produces a stripped static binary whe
 
 After enrollment the token file is removed. The permanent credential is written atomically to `/etc/noxwatch/credential.json` with mode `0600` and is never printed.
 
+## SSH Bootstrap
+
+For local/LAN installations, choose **SSH bootstrap** in Add Server and enter the SSH username, IPv4/DNS host, port, and an API endpoint reachable from that server. Build the agent once, then run the generated command from the repository root:
+
+```bash
+make agent-build
+./deployments/scripts/bootstrap-ssh.sh --target deploy@192.168.1.20 \
+  --endpoint http://192.168.1.10:8080 \
+  --token nox_enroll_example --server-name local-api --environment development
+```
+
+OpenSSH prompts for the SSH password locally; the password is never sent to or stored by NoxWatch. The remote user must have `sudo`, the host must use systemd, and the locally built binary must match the remote CPU architecture. Do not use `localhost` as the endpoint unless the NoxWatch API runs on the monitored server itself.
+
 The runtime sends heartbeats every 20 seconds and metrics every 45 seconds by default. Failed metric deliveries use exponential backoff and remain in a bounded in-memory queue of 100 samples; oldest samples are dropped when that ceiling is reached.
 
 ## Diagnostics

@@ -88,15 +88,14 @@ Integration tests use `TEST_DATABASE_URL`. They skip when it is unset and run ag
 ## Agent Enrollment
 
 1. Sign in, create a workspace, and choose **Add Server**.
-2. Select the available manual binary method.
-3. Build and install the agent:
+2. Select **SSH bootstrap** and enter the Linux SSH target and API endpoint reachable over the LAN.
+3. Build the agent and run the generated command from the repository root:
 
 ```bash
 make agent-build
-sudo ./deployments/scripts/install-local.sh ./dist/noxwatch-agent ./agent/packaging/agent.yaml.example
 ```
 
-4. Run the generated one-time enrollment command.
+OpenSSH asks for the SSH password in the local terminal; NoxWatch never receives or stores it. Manual binary installation remains available through `deployments/scripts/install-local.sh`.
 
 The enrollment token is stored only as a SHA-256 hash, expires after 15 minutes, and is returned once. After enrollment, the agent removes the token file and atomically writes its permanent credential with mode `0600`. See [docs/agent.md](docs/agent.md).
 
@@ -157,6 +156,7 @@ Full route ownership and flows are documented in [docs/architecture.md](docs/arc
 - Port already in use: set `API_PORT`, `WEB_PORT`, `POSTGRES_PORT`, or `REDIS_PORT` in `.env`.
 - Browser cannot refresh: ensure its exact origin is in `CORS_ALLOWED_ORIGINS`.
 - Agent rejects HTTP: use HTTPS, or set `allow_insecure_http: true` only for local development.
+- SSH bootstrap cannot connect: verify the SSH target, remote `sudo` access, and use the NoxWatch machine's LAN IP instead of `localhost` for the API endpoint.
 - No metrics: run `sudo noxwatch-agent status` and inspect `journalctl -u noxwatch-agent`.
 - Migration path error: run commands through the Makefile or set `MIGRATIONS_DIR` correctly for the process working directory.
 

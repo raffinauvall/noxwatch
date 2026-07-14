@@ -27,6 +27,7 @@ test:
 	cd apps/api && go test ./...
 	cd agent && go test ./...
 	npm --workspace apps/web run test
+	./deployments/scripts/bootstrap-ssh.test.sh
 
 lint:
 	test -z "$$(gofmt -l apps/api)"
