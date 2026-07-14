@@ -6,7 +6,7 @@ Build NoxWatch as a production-oriented server monitoring platform. Keep the MVP
 
 ## Current Phase
 
-Phase 1 foundation, Phase 2 auth/workspaces, and Phase 3 enrollment are complete. Phase 4 agent and ingestion are in progress:
+Phases 1-4 are complete. Phase 5 Add Server and monitoring dashboard are next:
 
 - Go API with `/health` and `/ready`.
 - PostgreSQL and Redis through Docker Compose.
@@ -18,8 +18,9 @@ Phase 1 foundation, Phase 2 auth/workspaces, and Phase 3 enrollment are complete
 - Login, registration, workspace onboarding, and authenticated dashboard states.
 - One-time enrollment tokens, revocable agent identity, heartbeat, and backend offline checks.
 - Static Linux agent, native metrics collectors, bounded queue, retry/backoff, and systemd service.
+- Credential-bound, idempotent typed metrics ingestion with tenant-scoped history.
 
-Do not enable the Add Server command until metrics ingestion and the local agent path pass end-to-end.
+The public install command remains disabled until a downloadable release artifact is configured; local binary enrollment is supported.
 
 ## Architecture Rules
 

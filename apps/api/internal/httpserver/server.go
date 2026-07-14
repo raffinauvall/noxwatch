@@ -14,6 +14,7 @@ import (
 	"github.com/raffinauvall/noxwatch/apps/api/internal/auth"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/config"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/enrollment"
+	"github.com/raffinauvall/noxwatch/apps/api/internal/metrics"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/servers"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/workspaces"
 )
@@ -27,7 +28,9 @@ func New(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, ready readyCh
 	authHandler := auth.NewHandler(auth.NewService(db, cfg.AuthSecret), cfg, logger)
 	authHandler.RegisterRoutes(mux)
 	workspaces.NewHandler(workspaces.NewService(db), logger).RegisterRoutes(mux, authHandler.Require)
-	enrollment.NewHandler(enrollment.NewService(db), logger).RegisterRoutes(mux, authHandler.Require)
+	enrollmentService := enrollment.NewService(db)
+	enrollment.NewHandler(enrollmentService, logger).RegisterRoutes(mux, authHandler.Require)
+	metrics.NewHandler(metrics.NewService(db, enrollmentService), logger).RegisterRoutes(mux, authHandler.Require)
 	servers.NewHandler(servers.NewService(db), logger).RegisterRoutes(mux, authHandler.Require)
 
 	handler := recoverer(logger)(requestLogger(logger)(securityHeaders(cfg.AppEnv == "production")(cors(cfg.CORSAllowedOrigins)(bodyLimit(mux)))))

@@ -21,6 +21,8 @@ The default build uses `CGO_ENABLED=0` and produces a stripped static binary whe
 
 After enrollment the token file is removed. The permanent credential is written atomically to `/etc/noxwatch/credential.json` with mode `0600` and is never printed.
 
+The runtime sends heartbeats every 20 seconds and metrics every 45 seconds by default. Failed metric deliveries use exponential backoff and remain in a bounded in-memory queue of 100 samples; oldest samples are dropped when that ceiling is reached.
+
 ## Diagnostics
 
 ```bash
