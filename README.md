@@ -2,7 +2,7 @@
 
 NoxWatch is a server monitoring platform for registering Linux servers with a short-lived token and monitoring health, resources, availability, and alerts from one dashboard.
 
-Current status: Phase 2 backend. Registration, login, refresh rotation, logout, workspace creation, and workspace isolation are implemented. The auth UI, enrollment, metrics, alerts, notifications, and agent remain planned until their phase is completed.
+Current status: Phase 2 complete. Registration, login, refresh rotation, logout, workspace onboarding, and workspace isolation are implemented in the API and web app. Enrollment, metrics, alerts, notifications, and agent remain planned until their phase is completed.
 
 ## Architecture
 
