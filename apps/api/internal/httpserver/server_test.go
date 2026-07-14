@@ -13,7 +13,7 @@ import (
 )
 
 func TestHealth(t *testing.T) {
-	srv := New(testConfig(), slog.Default(), func(context.Context) error { return nil })
+	srv := New(testConfig(), slog.Default(), nil, func(context.Context) error { return nil })
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 
@@ -28,7 +28,7 @@ func TestHealth(t *testing.T) {
 }
 
 func TestReadyFailureIsGeneric(t *testing.T) {
-	srv := New(testConfig(), slog.Default(), func(context.Context) error { return errors.New("sql password leaked") })
+	srv := New(testConfig(), slog.Default(), nil, func(context.Context) error { return errors.New("sql password leaked") })
 	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
 	rec := httptest.NewRecorder()
 
@@ -48,6 +48,7 @@ func testConfig() config.Config {
 		HTTPAddr:           ":0",
 		DatabaseURL:        "postgres://example",
 		RedisAddr:          "localhost:6379",
+		AuthSecret:         strings.Repeat("x", 32),
 		CORSAllowedOrigins: []string{"http://localhost:3000"},
 		MigrationsDir:      "../../migrations",
 	}

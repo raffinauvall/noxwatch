@@ -16,6 +16,7 @@ func TestLoadParsesAllowedOrigins(t *testing.T) {
 	env := map[string]string{
 		"DATABASE_URL":         "postgres://user:pass@localhost/db",
 		"REDIS_ADDR":           "localhost:6379",
+		"AUTH_SECRET":          strings.Repeat("x", 32),
 		"CORS_ALLOWED_ORIGINS": "http://localhost:3000, https://app.example.com ",
 	}
 	cfg, err := Load(func(key string) string { return env[key] })

@@ -52,7 +52,7 @@ func main() {
 		return
 	}
 
-	srv := httpserver.New(cfg, logger, func(ctx context.Context) error {
+	srv := httpserver.New(cfg, logger, db, func(ctx context.Context) error {
 		if err := db.Ping(ctx); err != nil {
 			return fmt.Errorf("postgres: %w", err)
 		}

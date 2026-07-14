@@ -6,15 +6,17 @@ Build NoxWatch as a production-oriented server monitoring platform. Keep the MVP
 
 ## Current Phase
 
-Phase 1 foundation is in progress:
+Phase 1 foundation is complete. Phase 2 backend is complete and its frontend flow is next:
 
 - Go API with `/health` and `/ready`.
 - PostgreSQL and Redis through Docker Compose.
 - Initial PostgreSQL schema migration.
 - Next.js dashboard shell with static preview data.
 - README and architecture docs.
+- Argon2id registration/login, rotating refresh sessions, and logout.
+- Owner workspace creation and tenant-isolated reads.
 
-Do not start Phase 2 auth/workspaces until Phase 1 checks pass.
+Do not start enrollment until the Phase 2 frontend flow and checks pass.
 
 ## Architecture Rules
 

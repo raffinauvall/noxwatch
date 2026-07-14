@@ -11,6 +11,7 @@ type Config struct {
 	HTTPAddr           string
 	DatabaseURL        string
 	RedisAddr          string
+	AuthSecret         string
 	CORSAllowedOrigins []string
 	MigrationsDir      string
 }
@@ -21,6 +22,7 @@ func Load(getenv func(string) string) (Config, error) {
 		HTTPAddr:      value(getenv, "HTTP_ADDR", ":8080"),
 		DatabaseURL:   getenv("DATABASE_URL"),
 		RedisAddr:     getenv("REDIS_ADDR"),
+		AuthSecret:    getenv("AUTH_SECRET"),
 		MigrationsDir: value(getenv, "MIGRATIONS_DIR", "../../migrations"),
 	}
 	if origins := strings.TrimSpace(getenv("CORS_ALLOWED_ORIGINS")); origins != "" {
@@ -40,6 +42,9 @@ func (c Config) Validate() error {
 	}
 	if c.RedisAddr == "" {
 		missing = append(missing, "REDIS_ADDR")
+	}
+	if len(c.AuthSecret) < 32 {
+		missing = append(missing, "AUTH_SECRET (at least 32 characters)")
 	}
 	if c.MigrationsDir == "" {
 		missing = append(missing, "MIGRATIONS_DIR")

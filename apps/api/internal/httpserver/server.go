@@ -10,17 +10,23 @@ import (
 	"slices"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/raffinauvall/noxwatch/apps/api/internal/auth"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/config"
+	"github.com/raffinauvall/noxwatch/apps/api/internal/workspaces"
 )
 
 type readyCheck func(context.Context) error
 
-func New(cfg config.Config, logger *slog.Logger, ready readyCheck) *http.Server {
+func New(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, ready readyCheck) *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler)
 	mux.HandleFunc("GET /ready", readyHandler(logger, ready))
+	authHandler := auth.NewHandler(auth.NewService(db, cfg.AuthSecret), cfg, logger)
+	authHandler.RegisterRoutes(mux)
+	workspaces.NewHandler(workspaces.NewService(db), logger).RegisterRoutes(mux, authHandler.Require)
 
-	handler := recoverer(logger)(requestLogger(logger)(securityHeaders(cors(cfg.CORSAllowedOrigins)(bodyLimit(mux)))))
+	handler := recoverer(logger)(requestLogger(logger)(securityHeaders(cfg.AppEnv == "production")(cors(cfg.CORSAllowedOrigins)(bodyLimit(mux)))))
 	return &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           handler,
@@ -93,13 +99,20 @@ func cors(origins []string) func(http.Handler) http.Handler {
 	}
 }
 
-func securityHeaders(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		next.ServeHTTP(w, r)
-	})
+func securityHeaders(production bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+			w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("X-Frame-Options", "DENY")
+			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+			if production {
+				w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
@@ -110,6 +123,7 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 				id = newRequestID()
 			}
 			w.Header().Set("X-Request-ID", id)
+			r.Header.Set("X-Request-ID", id)
 			r = r.WithContext(context.WithValue(r.Context(), requestIDKey{}, id))
 
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
