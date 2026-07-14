@@ -10,10 +10,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/raffinauvall/noxwatch/apps/api/internal/alerts"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/config"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/database"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/enrollment"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/httpserver"
+	"github.com/raffinauvall/noxwatch/apps/api/internal/notifications"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/observability"
 )
 
@@ -64,7 +66,8 @@ func main() {
 	})
 	monitorCtx, stopMonitor := context.WithCancel(context.Background())
 	defer stopMonitor()
-	go monitorServerStatus(monitorCtx, enrollment.NewService(db), logger)
+	alertService := alerts.NewService(db, notifications.NewService(db, cfg.AuthSecret, cfg.PublicWebURL, cfg.AppEnv == "development"))
+	go monitorServerStatus(monitorCtx, enrollment.NewService(db), alertService, logger)
 
 	go func() {
 		logger.Info("api listening", "addr", cfg.HTTPAddr)
@@ -87,7 +90,7 @@ func main() {
 	logger.Info("api stopped")
 }
 
-func monitorServerStatus(ctx context.Context, service *enrollment.Service, logger interface{ Error(string, ...any) }) {
+func monitorServerStatus(ctx context.Context, service *enrollment.Service, alertService *alerts.Service, logger interface{ Error(string, ...any) }) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -97,6 +100,9 @@ func monitorServerStatus(ctx context.Context, service *enrollment.Service, logge
 		case <-ticker.C:
 			if err := service.MarkOffline(ctx); err != nil && ctx.Err() == nil {
 				logger.Error("server status check failed", "error", err)
+			}
+			if err := alertService.EvaluateConnectivity(ctx); err != nil && ctx.Err() == nil {
+				logger.Error("connectivity alert evaluation failed", "error", err)
 			}
 		}
 	}

@@ -12,6 +12,7 @@ type Config struct {
 	DatabaseURL        string
 	RedisAddr          string
 	AuthSecret         string
+	PublicWebURL       string
 	CORSAllowedOrigins []string
 	MigrationsDir      string
 }
@@ -23,6 +24,7 @@ func Load(getenv func(string) string) (Config, error) {
 		DatabaseURL:   getenv("DATABASE_URL"),
 		RedisAddr:     getenv("REDIS_ADDR"),
 		AuthSecret:    getenv("AUTH_SECRET"),
+		PublicWebURL:  value(getenv, "PUBLIC_WEB_URL", "http://localhost:3000"),
 		MigrationsDir: value(getenv, "MIGRATIONS_DIR", "../../migrations"),
 	}
 	if origins := strings.TrimSpace(getenv("CORS_ALLOWED_ORIGINS")); origins != "" {
@@ -54,6 +56,9 @@ func (c Config) Validate() error {
 	}
 	if c.AppEnv == "production" && strings.Contains(c.DatabaseURL, "sslmode=disable") {
 		return errors.New("production DATABASE_URL must not disable TLS")
+	}
+	if c.AppEnv == "production" && !strings.HasPrefix(c.PublicWebURL, "https://") {
+		return errors.New("production PUBLIC_WEB_URL must use HTTPS")
 	}
 	return nil
 }

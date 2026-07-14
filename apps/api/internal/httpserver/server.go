@@ -11,10 +11,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/raffinauvall/noxwatch/apps/api/internal/alerts"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/auth"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/config"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/enrollment"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/metrics"
+	"github.com/raffinauvall/noxwatch/apps/api/internal/notifications"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/servers"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/workspaces"
 )
@@ -30,7 +32,19 @@ func New(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, ready readyCh
 	workspaces.NewHandler(workspaces.NewService(db), logger).RegisterRoutes(mux, authHandler.Require)
 	enrollmentService := enrollment.NewService(db)
 	enrollment.NewHandler(enrollmentService, logger).RegisterRoutes(mux, authHandler.Require)
-	metrics.NewHandler(metrics.NewService(db, enrollmentService), logger).RegisterRoutes(mux, authHandler.Require)
+	notificationService := notifications.NewService(db, cfg.AuthSecret, cfg.PublicWebURL, cfg.AppEnv == "development")
+	alertService := alerts.NewService(db, notificationService)
+	alerts.NewHandler(alertService, logger).RegisterRoutes(mux, authHandler.Require)
+	notifications.NewHandler(notificationService, cfg, logger).RegisterRoutes(mux, authHandler.Require)
+	metrics.NewHandler(metrics.NewService(db, enrollmentService), logger, func(ctx context.Context, payload metrics.Payload) error {
+		diskUsage := 0.0
+		for _, disk := range payload.Disks {
+			if disk.UsagePercent > diskUsage {
+				diskUsage = disk.UsagePercent
+			}
+		}
+		return alertService.EvaluateMetrics(ctx, payload.ServerID, payload.CollectedAt, alerts.Values{CPU: payload.CPU.UsagePercent, Memory: payload.Memory.UsagePercent, Disk: diskUsage, Swap: payload.Swap.UsagePercent})
+	}).RegisterRoutes(mux, authHandler.Require)
 	servers.NewHandler(servers.NewService(db), logger).RegisterRoutes(mux, authHandler.Require)
 
 	handler := recoverer(logger)(requestLogger(logger)(securityHeaders(cfg.AppEnv == "production")(cors(cfg.CORSAllowedOrigins)(bodyLimit(mux)))))

@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -18,10 +19,11 @@ import (
 )
 
 type Handler struct {
-	service *Service
-	logger  *slog.Logger
-	mu      sync.Mutex
-	rates   map[string]rate
+	service  *Service
+	logger   *slog.Logger
+	evaluate func(context.Context, Payload) error
+	mu       sync.Mutex
+	rates    map[string]rate
 }
 
 type rate struct {
@@ -29,8 +31,12 @@ type rate struct {
 	count  int
 }
 
-func NewHandler(service *Service, logger *slog.Logger) *Handler {
-	return &Handler{service: service, logger: logger, rates: map[string]rate{}}
+func NewHandler(service *Service, logger *slog.Logger, evaluate ...func(context.Context, Payload) error) *Handler {
+	handler := &Handler{service: service, logger: logger, rates: map[string]rate{}}
+	if len(evaluate) > 0 {
+		handler.evaluate = evaluate[0]
+	}
+	return handler
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, require func(http.Handler) http.Handler) {
@@ -66,6 +72,11 @@ func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("metrics ingestion failed", "request_id", r.Header.Get("X-Request-ID"), "server_id", payload.ServerID, "error", err)
 		httpx.WriteError(w, r, http.StatusInternalServerError, "INGESTION_FAILED", "Metrics could not be accepted.", nil)
 		return
+	}
+	if !duplicate && h.evaluate != nil {
+		if err := h.evaluate(r.Context(), payload); err != nil {
+			h.logger.Error("alert evaluation failed", "request_id", r.Header.Get("X-Request-ID"), "server_id", payload.ServerID, "error", err)
+		}
 	}
 	httpx.Write(w, http.StatusAccepted, map[string]bool{"accepted": true, "duplicate": duplicate})
 }
