@@ -7,7 +7,7 @@ import { ArrowRight, Building2, LoaderCircle } from "lucide-react";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { useAuth } from "@/app/providers";
-import { api, type Workspace } from "@/lib/api";
+import { type Workspace } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 
 const schema = z.object({ name: z.string().trim().min(2, "Use at least 2 characters.").max(100) });
@@ -32,7 +32,7 @@ export default function OnboardingPage() {
     }
     setRequestError("");
     try {
-      await api<Workspace>("/api/v1/workspaces", { method: "POST", body: JSON.stringify(parsed.data) }, auth.accessToken ?? undefined);
+      await auth.request<Workspace>("/api/v1/workspaces", { method: "POST", body: JSON.stringify(parsed.data) });
       await queryClient.invalidateQueries({ queryKey: ["workspaces"] });
       router.replace("/");
     } catch (error) {

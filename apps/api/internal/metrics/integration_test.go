@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/enrollment"
+	"github.com/raffinauvall/noxwatch/apps/api/internal/servers"
 )
 
 func TestIngestionIdempotencyAndIsolationIntegration(t *testing.T) {
@@ -60,8 +61,12 @@ func TestIngestionIdempotencyAndIsolationIntegration(t *testing.T) {
 		t.Fatalf("replay duplicate=%v err=%v", duplicate, err)
 	}
 	latest, err := service.Latest(ctx, ownerID, agent.ServerID)
-	if err != nil || latest.CPUUsagePercent != 22 {
+	if err != nil || latest.CPUUsagePercent != 22 || len(latest.Disks) != 1 {
 		t.Fatalf("latest=%+v err=%v", latest, err)
+	}
+	server, err := servers.NewService(db).Get(ctx, ownerID, agent.ServerID)
+	if err != nil || server.CPUUsagePercent == nil || *server.CPUUsagePercent != 22 || server.DiskUsagePercent == nil || *server.DiskUsagePercent != 25 {
+		t.Fatalf("server snapshot=%+v err=%v", server, err)
 	}
 	if _, err := service.Latest(ctx, outsiderID, agent.ServerID); !errors.Is(err, ErrNotFound) {
 		t.Fatal("outsider could read server metrics")

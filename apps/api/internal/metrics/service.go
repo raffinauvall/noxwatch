@@ -85,6 +85,12 @@ type Sample struct {
 	SwapUsagePercent   float64   `json:"swap_usage_percent"`
 }
 
+type Snapshot struct {
+	Sample
+	Disks    []DiskMetrics    `json:"disks"`
+	Networks []NetworkMetrics `json:"networks"`
+}
+
 type Service struct {
 	db         *pgxpool.Pool
 	enrollment *enrollment.Service
@@ -150,15 +156,50 @@ func (s *Service) History(ctx context.Context, userID, serverID string, from, to
 	return result, rows.Err()
 }
 
-func (s *Service) Latest(ctx context.Context, userID, serverID string) (Sample, error) {
-	row := s.db.QueryRow(ctx, `SELECT ms.collected_at,ms.uptime_seconds,ms.process_count,COALESCE(ms.cpu_usage_percent,0),COALESCE(ms.load_1,0),COALESCE(ms.load_5,0),COALESCE(ms.load_15,0),COALESCE(ms.memory_total_bytes,0),COALESCE(ms.memory_used_bytes,0),COALESCE(ms.memory_usage_percent,0),COALESCE(ms.swap_total_bytes,0),COALESCE(ms.swap_used_bytes,0),COALESCE(ms.swap_usage_percent,0)
+func (s *Service) Latest(ctx context.Context, userID, serverID string) (Snapshot, error) {
+	row := s.db.QueryRow(ctx, `SELECT ms.id,ms.collected_at,ms.uptime_seconds,ms.process_count,COALESCE(ms.cpu_usage_percent,0),COALESCE(ms.load_1,0),COALESCE(ms.load_5,0),COALESCE(ms.load_15,0),COALESCE(ms.memory_total_bytes,0),COALESCE(ms.memory_used_bytes,0),COALESCE(ms.memory_usage_percent,0),COALESCE(ms.swap_total_bytes,0),COALESCE(ms.swap_used_bytes,0),COALESCE(ms.swap_usage_percent,0)
 	 FROM metric_samples ms JOIN servers s ON s.id=ms.server_id JOIN workspace_members wm ON wm.workspace_id=s.workspace_id AND wm.user_id=$1 WHERE ms.server_id=$2 ORDER BY ms.collected_at DESC LIMIT 1`, userID, serverID)
-	var sample Sample
-	err := scanSample(row, &sample)
+	var result Snapshot
+	var sampleID string
+	err := row.Scan(&sampleID, &result.CollectedAt, &result.UptimeSeconds, &result.ProcessCount, &result.CPUUsagePercent, &result.Load1, &result.Load5, &result.Load15,
+		&result.MemoryTotalBytes, &result.MemoryUsedBytes, &result.MemoryUsagePercent, &result.SwapTotalBytes, &result.SwapUsedBytes, &result.SwapUsagePercent)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Sample{}, ErrNotFound
+		return Snapshot{}, ErrNotFound
 	}
-	return sample, err
+	if err != nil {
+		return Snapshot{}, err
+	}
+	result.Disks = []DiskMetrics{}
+	diskRows, err := s.db.Query(ctx, `SELECT mount_point,filesystem,total_bytes,used_bytes,COALESCE(available_bytes,0),COALESCE(usage_percent,0),COALESCE(inode_usage_percent,0) FROM disk_metric_samples WHERE metric_sample_id=$1 ORDER BY mount_point`, sampleID)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	for diskRows.Next() {
+		var disk DiskMetrics
+		if err := diskRows.Scan(&disk.MountPoint, &disk.Filesystem, &disk.TotalBytes, &disk.UsedBytes, &disk.AvailableBytes, &disk.UsagePercent, &disk.InodeUsagePercent); err != nil {
+			diskRows.Close()
+			return Snapshot{}, err
+		}
+		result.Disks = append(result.Disks, disk)
+	}
+	diskRows.Close()
+	if err := diskRows.Err(); err != nil {
+		return Snapshot{}, err
+	}
+	result.Networks = []NetworkMetrics{}
+	networkRows, err := s.db.Query(ctx, `SELECT interface_name,rx_bytes_total,tx_bytes_total,COALESCE(rx_packets_total,0),COALESCE(tx_packets_total,0),COALESCE(rx_errors_total,0),COALESCE(tx_errors_total,0),COALESCE(rx_bytes_per_second,0),COALESCE(tx_bytes_per_second,0) FROM network_metric_samples WHERE metric_sample_id=$1 ORDER BY interface_name`, sampleID)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	defer networkRows.Close()
+	for networkRows.Next() {
+		var network NetworkMetrics
+		if err := networkRows.Scan(&network.Interface, &network.RXBytesTotal, &network.TXBytesTotal, &network.RXPacketsTotal, &network.TXPacketsTotal, &network.RXErrorsTotal, &network.TXErrorsTotal, &network.RXBytesPerSecond, &network.TXBytesPerSecond); err != nil {
+			return Snapshot{}, err
+		}
+		result.Networks = append(result.Networks, network)
+	}
+	return result, networkRows.Err()
 }
 
 type scanner interface{ Scan(...any) error }

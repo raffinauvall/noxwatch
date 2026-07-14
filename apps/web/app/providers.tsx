@@ -2,7 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { api, type AuthData, type User } from "@/lib/api";
+import { api, ApiError, type AuthData, type User } from "@/lib/api";
 
 type AuthContextValue = {
   user: User | null;
@@ -11,6 +11,7 @@ type AuthContextValue = {
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, name: string) => Promise<void>;
   logout: () => Promise<void>;
+  request: <T>(path: string, init?: RequestInit) => Promise<T>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -32,6 +33,17 @@ export function Providers({ children }: { children: React.ReactNode }) {
     setSession(next);
   }, []);
 
+  const request = useCallback(async <T,>(path: string, init: RequestInit = {}) => {
+    try {
+      return await api<T>(path, init, session?.access_token);
+    } catch (error) {
+      if (!(error instanceof ApiError) || !["SESSION_INVALID", "AUTHENTICATION_REQUIRED"].includes(error.code)) throw error;
+      const next = await api<AuthData>("/api/v1/auth/refresh", { method: "POST" });
+      setSession(next);
+      return api<T>(path, init, next.access_token);
+    }
+  }, [session]);
+
   const value = useMemo<AuthContextValue>(() => ({
     user: session?.user ?? null,
     accessToken: session?.access_token ?? null,
@@ -45,7 +57,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
       setSession(null);
       queryClient.clear();
     },
-  }), [authenticate, loading, queryClient, session]);
+    request,
+  }), [authenticate, loading, queryClient, request, session]);
 
   return <QueryClientProvider client={queryClient}><AuthContext.Provider value={value}>{children}</AuthContext.Provider></QueryClientProvider>;
 }
