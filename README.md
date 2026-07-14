@@ -2,7 +2,7 @@
 
 NoxWatch is a server monitoring platform for registering Linux servers with a short-lived token and monitoring health, resources, availability, and alerts from one dashboard.
 
-Current status: Phase 3 backend. Auth and workspace onboarding are complete. One-time enrollment tokens, agent identity, heartbeat status, server reads, and credential revocation are implemented and tested. The installer UI, metrics, alerts, notifications, and agent runtime remain planned until their phase is completed.
+Current status: Phase 4 in progress. Auth, workspaces, enrollment, and the Linux agent runtime are implemented. The agent builds as a static binary, enrolls outbound-only, stores credentials with mode 0600, sends heartbeats, buffers metrics, and supports systemd. Dashboard metrics and alerting remain incomplete until their phases pass checks.
 
 ## Architecture
 
@@ -56,6 +56,16 @@ make seed
 make agent-build
 make agent-install-local
 ```
+
+Agent development:
+
+```bash
+make agent-build
+./dist/noxwatch-agent version
+sudo ./deployments/scripts/install-local.sh ./dist/noxwatch-agent ./agent/packaging/agent.yaml.example
+```
+
+See `docs/agent.md` for local enrollment and configuration.
 
 ## Environment
 

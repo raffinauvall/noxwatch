@@ -186,6 +186,28 @@ func (s *Service) Heartbeat(ctx context.Context, credential, serverID string) er
 	return err
 }
 
+func (s *Service) UnregisterAgent(ctx context.Context, credential, serverID string) error {
+	identity, err := s.AuthenticateAgent(ctx, credential, serverID)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if _, err := tx.Exec(ctx, `UPDATE agents SET revoked_at=now() WHERE id=$1`, identity.AgentID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE servers SET status='offline',updated_at=now() WHERE id=$1`, identity.ServerID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO audit_logs (workspace_id,actor_agent_id,action,target_type,target_id) VALUES ($1,$2,'agent.unregister','server',$3)`, identity.WorkspaceID, identity.AgentID, identity.ServerID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func (s *Service) AuthenticateAgent(ctx context.Context, credential, serverID string) (AgentIdentity, error) {
 	var identity AgentIdentity
 	err := s.db.QueryRow(ctx, `SELECT a.id, a.server_id, s.workspace_id FROM agents a JOIN servers s ON s.id=a.server_id WHERE a.credential_hash=$1 AND a.server_id=$2 AND a.revoked_at IS NULL`, hash(credential), serverID).

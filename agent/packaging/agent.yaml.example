@@ -1,0 +1,6 @@
+endpoint: https://api.noxwatch.example.com
+server_name: prod-api-01
+environment: production
+enrollment_file: /etc/noxwatch/enrollment-token
+credential_file: /etc/noxwatch/credential.json
+allow_insecure_http: false

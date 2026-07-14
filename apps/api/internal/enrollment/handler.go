@@ -31,6 +31,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, require func(http.Handler) 
 	mux.Handle("DELETE /api/v1/servers/{serverId}/agent", require(http.HandlerFunc(h.revokeAgent)))
 	mux.HandleFunc("POST /api/v1/agent/enroll", h.enroll)
 	mux.HandleFunc("POST /api/v1/agent/heartbeat", h.heartbeat)
+	mux.HandleFunc("POST /api/v1/agent/unregister", h.unregister)
 }
 
 func (h *Handler) createToken(w http.ResponseWriter, r *http.Request) {
@@ -130,6 +131,23 @@ func (h *Handler) heartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.Write(w, http.StatusOK, map[string]int{"next_heartbeat_seconds": 20})
+}
+
+func (h *Handler) unregister(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		ServerID string `json:"server_id"`
+	}
+	if !httpx.Decode(w, r, &input) {
+		return
+	}
+	if err := h.service.UnregisterAgent(r.Context(), bearer(r), input.ServerID); errors.Is(err, ErrAgentUnauthorized) {
+		httpx.WriteError(w, r, http.StatusUnauthorized, "AGENT_AUTHENTICATION_FAILED", "Agent authentication failed.", nil)
+		return
+	} else if err != nil {
+		h.internalError(w, r, err)
+		return
+	}
+	httpx.Write(w, http.StatusOK, map[string]bool{"revoked": true})
 }
 
 func (h *Handler) revokeAgent(w http.ResponseWriter, r *http.Request) {
