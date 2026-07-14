@@ -9,7 +9,6 @@ WORKDIR /app
 ARG NEXT_PUBLIC_API_URL=http://localhost:8080
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
 COPY package.json package-lock.json ./
 COPY apps/web ./apps/web
 WORKDIR /app/apps/web

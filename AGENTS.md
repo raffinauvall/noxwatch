@@ -6,13 +6,13 @@ Build NoxWatch as a production-oriented server monitoring platform. Keep the MVP
 
 ## Current Phase
 
-Phases 1-5 are complete. Phase 6 alerting and signed webhook notifications are next:
+The MVP phases are complete and in hardening/maintenance mode:
 
-- Go API with `/health` and `/ready`.
-- PostgreSQL and Redis through Docker Compose.
-- Initial PostgreSQL schema migration.
-- Next.js dashboard shell with static preview data.
-- README and architecture docs.
+- Go API with health, readiness, Prometheus metrics, and structured request logs.
+- PostgreSQL schema migrations, Redis readiness, retention, and Docker Compose health checks.
+- Next.js dashboard backed by tenant-scoped API data and live SSE status events.
+- Linux monitoring agent, systemd packaging, and protected local credentials.
+- README, architecture, agent, and production operations documentation.
 - Argon2id registration/login, rotating refresh sessions, and logout.
 - Owner workspace creation and tenant-isolated reads.
 - Login, registration, workspace onboarding, and authenticated dashboard states.
@@ -20,8 +20,11 @@ Phases 1-5 are complete. Phase 6 alerting and signed webhook notifications are n
 - Static Linux agent, native metrics collectors, bounded queue, retry/backoff, and systemd service.
 - Credential-bound, idempotent typed metrics ingestion with tenant-scoped history.
 - Add Server enrollment flow, real server inventory, latest snapshots, and bounded historical charts.
+- Duration-aware alert lifecycle, alert-driven server status, cooldown/deduplication, and signed webhook notification.
+- Responsive alert/integration screens, filtered server inventory, live SSE status, and dark/light themes.
+- Daily metric/session/token retention, idempotent development seed, Prometheus counters, and Docker health checks.
 
-The public install command remains disabled until a downloadable release artifact is configured; local binary enrollment is supported.
+The public install command remains disabled until a signed downloadable release artifact is configured; local binary enrollment is supported. The supported MVP deployment has one API replica because rate limits are process-local.
 
 ## Architecture Rules
 

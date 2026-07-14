@@ -1,0 +1,13 @@
+.git
+.env
+.next
+node_modules
+**/node_modules
+**/.next
+dist
+coverage
+tmp
+*.log
+*.test
+apps/api/api
+apps/api/bin

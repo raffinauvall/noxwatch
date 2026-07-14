@@ -35,8 +35,11 @@ services:
       DATABASE_URL: postgres://noxwatch:noxwatch_dev_password@postgres:5432/noxwatch?sslmode=disable
       REDIS_ADDR: redis:6379
       MIGRATIONS_DIR: /app/migrations
+      PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:-http://localhost:3000}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      METRIC_RETENTION_DAYS: ${METRIC_RETENTION_DAYS:-30}
     ports:
-      - "8080:8080"
+      - "${API_PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -55,9 +58,9 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8080
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
     ports:
-      - "3000:3000"
+      - "${WEB_PORT:-3000}:3000"
     depends_on:
       api:
         condition: service_healthy

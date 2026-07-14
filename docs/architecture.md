@@ -5,25 +5,25 @@ NoxWatch is an agent-based Linux server monitoring platform. The MVP registers a
 ## 1. Product Architecture
 
 - `apps/web`: Next.js App Router dashboard, Tailwind CSS, shadcn-style primitives, TanStack Query, Recharts, Lucide icons.
-- `apps/api`: Go REST API, PostgreSQL persistence, Redis for ephemeral tokens/rate limits/jobs, structured `slog` logging, health/readiness endpoints.
+- `apps/api`: Go REST API, PostgreSQL persistence, Redis readiness dependency, structured `slog` logging, health/readiness and Prometheus endpoints.
 - `agent`: Go Linux agent, outbound-only HTTPS, systemd service, local protected credential file, retry/backoff and bounded buffering.
 - `migrations`: PostgreSQL schema migrations.
 - `deployments`: Docker and systemd assets.
 
-Phase 1 intentionally ships only the foundation. Auth, enrollment, metrics, alerting, and notifications are planned phases until implemented and tested.
+All seven MVP phases are implemented. Redis-backed distributed rate counters, aggregate metric rollups, and multi-region collectors remain scale-out work; the current limiter is process-local and the supported deployment shape is one API replica.
 
 ## 2. System Component Diagram
 
 ```mermaid
 flowchart LR
   User[User Browser] --> Web[Next.js Dashboard]
-  Web -->|REST + SSE later| API[Go REST API]
+  Web -->|REST + SSE status| API[Go REST API]
   Agent[NoxWatch Agent] -->|Enroll / Heartbeat / Metrics| API
   API --> Postgres[(PostgreSQL)]
   API --> Redis[(Redis)]
   API --> Logs[Structured Logs]
-  API --> Metrics[Prometheus Metrics later]
-  API --> Webhook[Signed Webhooks in Phase 6]
+  API --> Metrics[Prometheus Scraper]
+  API --> Webhook[HMAC Signed Webhooks]
 ```
 
 ## 3. Agent Enrollment Flow
@@ -33,13 +33,11 @@ sequenceDiagram
   actor User
   participant Web
   participant API
-  participant Redis
   participant DB as PostgreSQL
   participant Agent
 
   User->>Web: Add Server
   Web->>API: POST /api/v1/servers/enrollment-token
-  API->>Redis: store short-lived token marker
   API->>DB: store hashed token scoped to workspace
   API-->>Web: plaintext token once
   User->>Agent: run install command with token
@@ -64,7 +62,7 @@ sequenceDiagram
   API->>API: authenticate credential and validate payload
   API->>DB: insert metric sample by agent_id + sequence
   API->>DB: update server last_seen/status
-  API->>Evaluator: enqueue or run bounded alert evaluation
+  API->>Evaluator: evaluate enabled rules after committed ingestion
   API-->>Agent: accepted or idempotent success
 ```
 
@@ -97,16 +95,18 @@ Core query indexes are workspace/status for servers, server/time for metrics, wo
 | --- | --- | --- | --- |
 | GET | `/health` | 1 | Liveness, no dependencies. |
 | GET | `/ready` | 1 | Checks PostgreSQL and Redis. |
+| GET | `/metrics` | 1 | Prometheus-compatible platform counters. |
 | POST | `/api/v1/auth/register` | 2 | Generic auth errors and rate limit. |
 | POST | `/api/v1/auth/login` | 2 | Secure password verification. |
 | POST | `/api/v1/auth/refresh` | 2 | Revocable refresh sessions. |
 | POST | `/api/v1/auth/logout` | 2 | Session revocation. |
 | GET/POST | `/api/v1/workspaces` | 2 | Workspace list/create. |
 | GET | `/api/v1/workspaces/:workspaceId` | 2 | Membership-scoped access. |
-| GET | `/api/v1/servers` | 3 | Workspace-scoped list. |
+| GET | `/api/v1/servers` | 3-7 | Workspace-scoped, filtered, sorted, bounded list. |
 | POST | `/api/v1/servers/enrollment-token` | 3 | One-time short-lived token. |
 | GET/DELETE | `/api/v1/enrollment-tokens/:tokenId` | 3 | Poll or revoke an enrollment token. |
-| GET/PATCH/DELETE | `/api/v1/servers/:serverId` | 3-5 | Server detail/update/delete. |
+| GET/PATCH/DELETE | `/api/v1/servers/:serverId` | 3-7 | Server detail, metadata/maintenance update, deletion. |
+| GET | `/api/v1/workspaces/:workspaceId/events` | 7 | Bearer-authenticated SSE server status stream. |
 | GET | `/api/v1/servers/:serverId/metrics` | 5 | Bounded historical range. |
 | GET | `/api/v1/servers/:serverId/metrics/latest` | 5 | Latest sample. |
 | GET | `/api/v1/servers/:serverId/alerts` | 6 | Server alert history. |
@@ -115,6 +115,9 @@ Core query indexes are workspace/status for servers, server/time for metrics, wo
 | POST | `/api/v1/agent/metrics` | 4 | Credential-authenticated ingestion. |
 | GET/POST | `/api/v1/alert-rules` | 6 | Workspace/server alert rules. |
 | PATCH/DELETE | `/api/v1/alert-rules/:ruleId` | 6 | Alert rule changes. |
+| GET | `/api/v1/alerts` | 6 | Workspace incident feed. |
+| GET/POST | `/api/v1/notification-channels` | 6 | Encrypted webhook integrations. |
+| DELETE | `/api/v1/notification-channels/:channelId` | 6 | Delete webhook integration. |
 
 ## 7. Security Threat Overview
 
@@ -127,6 +130,7 @@ Core query indexes are workspace/status for servers, server/time for metrics, wo
 - Sensitive logging: request logs exclude passwords, auth headers, tokens, and full metric payloads.
 - CSRF/XSS/CORS: secure cookies where used, CSRF for cookie auth, strict CORS allowlist, security headers, React escaping.
 - Retry abuse: bounded body sizes, rate limits, strict timeouts, idempotent metrics by agent sequence.
+- Webhook SSRF/tampering: production blocks private destinations and unsafe redirects; URLs use AES-GCM at rest and payloads use HMAC-SHA256 signatures.
 - Unsafe remote control: no browser terminal, SSH password storage, remote shell, or arbitrary command execution in the MVP.
 
 ## 8. Repository Structure
@@ -161,7 +165,7 @@ Some directories are introduced when their phase starts. Empty scaffolding is av
 4. Agent/ingestion: Linux metrics collector, heartbeat, metrics API, credential storage and revocation.
 5. Dashboard: server list, detail, latest metrics, historical charts, live status updates.
 6. Alerting/notifications: alert rules, lifecycle, cooldown/deduplication, signed webhook channel.
-7. Hardening: audit logs, rate limits, retention job, authorization review, production docs.
+7. Hardening: server lifecycle, SSE, audit logs, retention job, realistic development seed, authorization tests, production docs.
 
 ## 10. MVP vs Future Features
 
