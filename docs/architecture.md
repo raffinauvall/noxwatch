@@ -105,6 +105,7 @@ Core query indexes are workspace/status for servers, server/time for metrics, wo
 | GET | `/api/v1/workspaces/:workspaceId` | 2 | Membership-scoped access. |
 | GET | `/api/v1/servers` | 3 | Workspace-scoped list. |
 | POST | `/api/v1/servers/enrollment-token` | 3 | One-time short-lived token. |
+| GET/DELETE | `/api/v1/enrollment-tokens/:tokenId` | 3 | Poll or revoke an enrollment token. |
 | GET/PATCH/DELETE | `/api/v1/servers/:serverId` | 3-5 | Server detail/update/delete. |
 | GET | `/api/v1/servers/:serverId/metrics` | 5 | Bounded historical range. |
 | GET | `/api/v1/servers/:serverId/metrics/latest` | 5 | Latest sample. |

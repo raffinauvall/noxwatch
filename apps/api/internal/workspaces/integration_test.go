@@ -40,6 +40,7 @@ func TestWorkspaceIsolationIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer db.Exec(ctx, `DELETE FROM workspaces WHERE id = $1`, workspace.ID) //nolint:errcheck
 	if _, err := service.Get(ctx, ownerID, workspace.ID); err != nil {
 		t.Fatalf("owner cannot read workspace: %v", err)
 	}

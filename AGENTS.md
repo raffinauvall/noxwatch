@@ -6,7 +6,7 @@ Build NoxWatch as a production-oriented server monitoring platform. Keep the MVP
 
 ## Current Phase
 
-Phase 1 foundation and Phase 2 auth/workspaces are complete. Phase 3 enrollment is next:
+Phase 1 foundation and Phase 2 auth/workspaces are complete. Phase 3 enrollment backend is complete and the Go agent is next:
 
 - Go API with `/health` and `/ready`.
 - PostgreSQL and Redis through Docker Compose.
@@ -16,8 +16,9 @@ Phase 1 foundation and Phase 2 auth/workspaces are complete. Phase 3 enrollment 
 - Argon2id registration/login, rotating refresh sessions, and logout.
 - Owner workspace creation and tenant-isolated reads.
 - Login, registration, workspace onboarding, and authenticated dashboard states.
+- One-time enrollment tokens, revocable agent identity, heartbeat, and backend offline checks.
 
-Do not start the monitoring agent until enrollment security and one-time-use tests pass.
+Do not enable the Add Server command until the installer and agent enrollment path pass end-to-end.
 
 ## Architecture Rules
 

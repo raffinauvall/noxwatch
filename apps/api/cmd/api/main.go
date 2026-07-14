@@ -12,6 +12,7 @@ import (
 
 	"github.com/raffinauvall/noxwatch/apps/api/internal/config"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/database"
+	"github.com/raffinauvall/noxwatch/apps/api/internal/enrollment"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/httpserver"
 	"github.com/raffinauvall/noxwatch/apps/api/internal/observability"
 )
@@ -61,6 +62,9 @@ func main() {
 		}
 		return nil
 	})
+	monitorCtx, stopMonitor := context.WithCancel(context.Background())
+	defer stopMonitor()
+	go monitorServerStatus(monitorCtx, enrollment.NewService(db), logger)
 
 	go func() {
 		logger.Info("api listening", "addr", cfg.HTTPAddr)
@@ -81,6 +85,21 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("api stopped")
+}
+
+func monitorServerStatus(ctx context.Context, service *enrollment.Service, logger interface{ Error(string, ...any) }) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := service.MarkOffline(ctx); err != nil && ctx.Err() == nil {
+				logger.Error("server status check failed", "error", err)
+			}
+		}
+	}
 }
 
 func checkHealth() {
