@@ -4,11 +4,12 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, AlertTriangle, LogOut, Plus, RotateCcw, Server, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Bell, Plus, RotateCcw, Server, ShieldCheck } from "lucide-react";
 import { useAuth } from "@/app/providers";
-import { type ServerRecord, type Workspace } from "@/lib/api";
+import { type AlertEvent, type ServerRecord, type Workspace } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/status-pill";
+import { DashboardShell } from "@/components/dashboard-shell";
 
 export default function Home() {
   const router = useRouter();
@@ -25,6 +26,7 @@ export default function Home() {
     enabled: Boolean(auth.accessToken && workspace?.id),
     refetchInterval: 20_000,
   });
+  const alerts = useQuery({ queryKey: ["workspace-alerts", workspace?.id], queryFn: () => auth.request<AlertEvent[]>(`/api/v1/alerts?workspace_id=${workspace?.id}`), enabled: Boolean(auth.accessToken && workspace?.id), refetchInterval: 30_000 });
 
   useEffect(() => {
     if (!auth.loading && !auth.user) router.replace("/login");
@@ -40,37 +42,20 @@ export default function Home() {
 
   const currentWorkspace = workspaces.data[0];
   const serverRows = servers.data ?? [];
+  const incidents = alerts.data ?? [];
+  const activeAlerts = alerts.isError ? "—" : incidents.filter((event) => event.state === "firing" || event.state === "pending").length;
   const summary = [
     ["Total servers", serverRows.length],
     ["Online", serverRows.filter((server) => server.status === "online").length],
     ["Warning", serverRows.filter((server) => ["warning", "degraded"].includes(server.status)).length],
     ["Offline", serverRows.filter((server) => server.status === "offline").length],
+    ["Active alerts", activeAlerts],
+    ["Average CPU", average(serverRows.map((server) => server.cpu_usage_percent))],
+    ["Average memory", average(serverRows.map((server) => server.memory_usage_percent))],
+    ["Average disk", average(serverRows.map((server) => server.disk_usage_percent))],
   ] as const;
   return (
-    <main className="min-h-screen bg-background text-foreground">
-      <aside className="fixed inset-y-0 left-0 hidden w-64 border-r border-panel-border bg-[#09131d] p-5 lg:flex lg:flex-col">
-        <div className="flex items-center gap-3">
-          <span className="flex h-9 w-9 items-center justify-center rounded-md border border-accent/40 bg-accent/10"><Activity className="h-5 w-5 text-accent" /></span>
-          <div><p className="text-sm font-semibold">NoxWatch</p><p className="text-xs text-muted">{currentWorkspace.name}</p></div>
-        </div>
-        <nav className="mt-10 grid gap-1 text-sm text-muted">
-          {[
-            ["Overview", true], ["Servers", false], ["Alerts", false], ["Integrations", false], ["Team", false], ["Audit Logs", false], ["Settings", false],
-          ].map(([item, active]) => <span key={String(item)} className={`rounded-md px-3 py-2 ${active ? "bg-panel text-foreground" : "opacity-60"}`}>{item}</span>)}
-        </nav>
-        <button className="mt-auto flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-muted hover:bg-panel hover:text-foreground" onClick={() => auth.logout().then(() => router.replace("/login"))}>
-          <LogOut className="h-4 w-4" /> Sign out
-        </button>
-      </aside>
-
-      <section className="lg:pl-64">
-        <header className="sticky top-0 z-10 border-b border-panel-border bg-background/95 px-5 py-4 backdrop-blur">
-          <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
-            <div><h1 className="text-xl font-semibold">Overview</h1><p className="text-sm text-muted">{currentWorkspace.name} · {currentWorkspace.role}</p></div>
-            <Button onClick={() => router.push("/servers/add")}><Plus className="h-4 w-4" />Add Server</Button>
-          </div>
-        </header>
-
+    <DashboardShell workspace={currentWorkspace} title="Overview" action={<Button onClick={() => router.push("/servers/add")}><Plus className="h-4 w-4" />Add Server</Button>}>
         <div className="mx-auto grid max-w-7xl gap-5 px-5 py-6">
           <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {summary.map(([label, value]) => (
@@ -78,14 +63,18 @@ export default function Home() {
             ))}
           </section>
 
-          {serverRows.length === 0 ? <section className="grid min-h-[360px] place-items-center rounded-lg border border-dashed border-panel-border px-6 text-center">
+          {alerts.isError && <section className="flex items-center justify-between gap-4 border-l-2 border-warning bg-warning/5 px-4 py-3 text-sm"><span>Server data is current, but the alert feed is temporarily unavailable.</span><button className="text-accent hover:underline" onClick={() => alerts.refetch()}>Retry</button></section>}
+
+          {incidents.length > 0 && <section className="overflow-hidden rounded-lg border border-panel-border bg-panel"><div className="flex items-center gap-2 border-b border-panel-border px-4 py-3"><Bell className="h-4 w-4 text-muted" /><h2 className="text-sm font-semibold">Recent incidents</h2></div><div className="divide-y divide-panel-border">{incidents.slice(0, 5).map((event) => <Link key={event.id} href={`/servers/${event.server_id}`} className="grid gap-2 px-4 py-3 text-sm hover:bg-background/40 sm:grid-cols-[minmax(0,1fr)_100px_180px] sm:items-center"><span className="truncate font-medium">{event.rule_name}</span><span className={event.state === "firing" ? "text-danger" : "text-muted"}>{event.state}</span><time className="text-xs text-muted">{new Date(event.triggered_at).toLocaleString()}</time></Link>)}</div></section>}
+
+          {serverRows.length === 0 ? <section id="servers" className="grid min-h-[360px] place-items-center rounded-lg border border-dashed border-panel-border px-6 text-center">
             <div className="max-w-md">
               <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-md border border-panel-border bg-panel"><Server className="h-5 w-5 text-muted" /></span>
               <h2 className="mt-5 text-base font-semibold">No servers enrolled</h2>
               <p className="mt-2 text-sm leading-6 text-muted">Generate a short-lived enrollment token, then connect the local Linux agent binary.</p>
               <div className="mt-5 flex items-center justify-center gap-2 text-xs text-muted"><ShieldCheck className="h-4 w-4 text-accent" />Workspace access is isolated and audited</div>
             </div>
-          </section> : <section className="overflow-hidden rounded-lg border border-panel-border bg-panel">
+          </section> : <section id="servers" className="overflow-hidden rounded-lg border border-panel-border bg-panel">
             <div className="border-b border-panel-border px-4 py-3"><h2 className="text-sm font-semibold">Servers</h2></div>
             <div className="overflow-x-auto"><table className="w-full min-w-[820px] text-left text-sm">
               <thead className="text-muted"><tr><th className="px-4 py-3 font-medium">Server</th><th className="px-4 py-3 font-medium">Status</th><th className="px-4 py-3 font-medium">CPU</th><th className="px-4 py-3 font-medium">Memory</th><th className="px-4 py-3 font-medium">Disk</th><th className="px-4 py-3 font-medium">Uptime</th><th className="px-4 py-3 font-medium">Last seen</th></tr></thead>
@@ -101,12 +90,12 @@ export default function Home() {
             </table></div>
           </section>}
         </div>
-      </section>
-    </main>
+    </DashboardShell>
   );
 }
 
 function formatPercent(value: number | null) { return value == null ? "—" : `${value.toFixed(1)}%`; }
+function average(values: Array<number | null>) { const available = values.filter((value): value is number => value != null); return available.length ? `${(available.reduce((sum, value) => sum + value, 0) / available.length).toFixed(1)}%` : "—"; }
 function formatUptime(value: number | null) {
   if (value == null) return "—";
   const days = Math.floor(value / 86400);

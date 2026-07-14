@@ -17,6 +17,18 @@ export type MetricSnapshot = MetricSample & {
   disks: Array<{ mount_point: string; filesystem: string; total_bytes: number; used_bytes: number; available_bytes: number; usage_percent: number; inode_usage_percent: number }>;
   networks: Array<{ interface: string; rx_bytes_total: number; tx_bytes_total: number; rx_bytes_per_second: number; tx_bytes_per_second: number }>;
 };
+export type AlertRule = {
+  id: string; workspace_id: string; server_id: string; name: string;
+  metric: "cpu_usage" | "memory_usage" | "disk_usage" | "swap_usage" | "server_offline" | "agent_disconnected";
+  warning_threshold: number | null; critical_threshold: number | null;
+  evaluation_seconds: number; cooldown_seconds: number; enabled: boolean;
+};
+export type AlertEvent = {
+  id: string; alert_rule_id: string; server_id: string; rule_name: string; severity: "warning" | "critical";
+  state: "pending" | "firing" | "resolved" | "acknowledged"; current_value: number; threshold: number;
+  triggered_at: string; resolved_at: string | null;
+};
+export type NotificationChannel = { id: string; name: string; type: "webhook"; enabled: boolean; created_at: string; secret?: string };
 
 type Envelope<T> = {
   data: T | null;

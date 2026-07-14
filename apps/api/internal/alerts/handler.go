@@ -37,6 +37,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, require func(http.Handler) 
 	mux.Handle("PATCH /api/v1/alert-rules/{ruleId}", require(http.HandlerFunc(h.update)))
 	mux.Handle("DELETE /api/v1/alert-rules/{ruleId}", require(http.HandlerFunc(h.delete)))
 	mux.Handle("GET /api/v1/servers/{serverId}/alerts", require(http.HandlerFunc(h.events)))
+	mux.Handle("GET /api/v1/alerts", require(http.HandlerFunc(h.workspaceEvents)))
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
@@ -124,6 +125,21 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	claims, _ := auth.Claims(r.Context())
 	events, err := h.service.Events(r.Context(), claims.UserID, r.PathValue("serverId"))
+	if err != nil {
+		h.internalError(w, r, err)
+		return
+	}
+	httpx.Write(w, http.StatusOK, events)
+}
+
+func (h *Handler) workspaceEvents(w http.ResponseWriter, r *http.Request) {
+	workspaceID := r.URL.Query().Get("workspace_id")
+	if workspaceID == "" {
+		h.validationError(w, r, map[string]string{"workspace_id": "Workspace is required."})
+		return
+	}
+	claims, _ := auth.Claims(r.Context())
+	events, err := h.service.WorkspaceEvents(r.Context(), claims.UserID, workspaceID)
 	if err != nil {
 		h.internalError(w, r, err)
 		return

@@ -4,10 +4,10 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, AlertTriangle, ArrowLeft, Cpu, Database, HardDrive, MemoryStick, Network, RotateCcw } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeft, Bell, Cpu, Database, HardDrive, MemoryStick, Network, RotateCcw } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useAuth } from "@/app/providers";
-import { type MetricSample, type MetricSnapshot, type ServerRecord } from "@/lib/api";
+import { type AlertEvent, type MetricSample, type MetricSnapshot, type ServerRecord } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/status-pill";
 
@@ -21,6 +21,7 @@ export default function ServerPage() {
   const server = useQuery({ queryKey: ["server", serverID], queryFn: () => auth.request<ServerRecord>(`/api/v1/servers/${serverID}`), enabled: Boolean(auth.accessToken), refetchInterval: 20_000 });
   const latest = useQuery({ queryKey: ["metrics-latest", serverID], queryFn: () => auth.request<MetricSnapshot>(`/api/v1/servers/${serverID}/metrics/latest`), enabled: Boolean(auth.accessToken), retry: false, refetchInterval: 30_000 });
   const history = useQuery({ queryKey: ["metrics", serverID, hours], queryFn: () => { const to = new Date(); const from = new Date(to.getTime() - hours * 3600_000); return auth.request<MetricSample[]>(`/api/v1/servers/${serverID}/metrics?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}&limit=2000`); }, enabled: Boolean(auth.accessToken) });
+  const alerts = useQuery({ queryKey: ["server-alerts", serverID], queryFn: () => auth.request<AlertEvent[]>(`/api/v1/servers/${serverID}/alerts`), enabled: Boolean(auth.accessToken), refetchInterval: 30_000 });
 
   useEffect(() => { if (!auth.loading && !auth.user) router.replace("/login"); }, [auth.loading, auth.user, router]);
   if (auth.loading || !auth.user || server.isLoading) return <DetailSkeleton />;
@@ -51,6 +52,10 @@ export default function ServerPage() {
       </section>
 
       <section className="grid gap-3 rounded-lg border border-panel-border bg-panel p-4 text-sm sm:grid-cols-2 xl:grid-cols-4"><Info label="Kernel" value={item.kernel_version} /><Info label="Architecture" value={item.architecture} /><Info label="Agent" value={item.agent_version} /><Info label="Last heartbeat" value={item.last_seen_at ? new Date(item.last_seen_at).toLocaleString() : "Never"} /></section>
+      <section className="overflow-hidden rounded-lg border border-panel-border bg-panel">
+        <div className="flex items-center justify-between border-b border-panel-border px-4 py-3"><div className="flex items-center gap-2"><Bell className="h-4 w-4 text-muted" /><h2 className="text-sm font-semibold">Alert history</h2></div><Link href="/alerts" className="text-xs text-accent hover:underline">Manage rules</Link></div>
+        {alerts.isLoading ? <div className="h-24 animate-pulse bg-background/30" /> : alerts.data?.length ? <div className="divide-y divide-panel-border">{alerts.data.slice(0, 20).map((event) => <div key={event.id} className="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_100px_180px] sm:items-center"><div><p className="font-medium">{event.rule_name}</p><p className="mt-1 text-xs text-muted">{event.current_value.toFixed(1)} at {event.threshold.toFixed(1)} threshold</p></div><span className={event.severity === "critical" ? "text-danger" : "text-warning"}>{event.state}</span><time className="text-xs text-muted">{new Date(event.triggered_at).toLocaleString()}</time></div>)}</div> : <p className="p-6 text-sm text-muted">No alert events recorded for this server.</p>}
+      </section>
     </div>
   </main>;
 }

@@ -20,6 +20,17 @@ html {
   color: var(--color-foreground);
 }
 
+:root[data-theme="light"] {
+  --color-background: #f4f7fa;
+  --color-foreground: #14202b;
+  --color-muted: #5f7182;
+  --color-panel: #ffffff;
+  --color-panel-border: #d7e0e8;
+  --color-accent: #087f6b;
+  --color-warning: #a76600;
+  --color-danger: #c83b45;
+}
+
 body {
   margin: 0;
   min-height: 100vh;

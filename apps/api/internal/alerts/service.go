@@ -157,6 +157,23 @@ func (s *Service) Events(ctx context.Context, userID, serverID string) ([]Event,
 	return result, rows.Err()
 }
 
+func (s *Service) WorkspaceEvents(ctx context.Context, userID, workspaceID string) ([]Event, error) {
+	rows, err := s.db.Query(ctx, `SELECT ae.id,ae.alert_rule_id,ae.server_id,ar.name,ae.severity,ae.state,COALESCE(ae.current_value,0),COALESCE(ae.threshold,0),ae.triggered_at,ae.resolved_at FROM alert_events ae JOIN alert_rules ar ON ar.id=ae.alert_rule_id JOIN workspace_members wm ON wm.workspace_id=ae.workspace_id AND wm.user_id=$1 WHERE ae.workspace_id=$2 ORDER BY ae.triggered_at DESC LIMIT 100`, userID, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []Event{}
+	for rows.Next() {
+		var event Event
+		if err := rows.Scan(&event.ID, &event.RuleID, &event.ServerID, &event.RuleName, &event.Severity, &event.State, &event.CurrentValue, &event.Threshold, &event.TriggeredAt, &event.ResolvedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, event)
+	}
+	return result, rows.Err()
+}
+
 func (s *Service) EvaluateMetrics(ctx context.Context, serverID string, collectedAt time.Time, values Values) error {
 	rules, err := s.rulesForServer(ctx, serverID, []string{"cpu_usage", "memory_usage", "disk_usage", "swap_usage"})
 	if err != nil {

@@ -91,8 +91,12 @@ func (h *Handler) validate(workspaceID, name, rawURL string) map[string]string {
 		fields["name"] = "Name must be between 1 and 100 characters."
 	}
 	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed == nil {
+		fields["url"] = "Enter a valid HTTPS webhook URL."
+		return fields
+	}
 	allowedScheme := parsed.Scheme == "https" || (h.cfg.AppEnv == "development" && parsed.Scheme == "http")
-	if err != nil || parsed.Host == "" || parsed.User != nil || !allowedScheme || len(rawURL) > 2000 {
+	if parsed.Host == "" || parsed.User != nil || !allowedScheme || len(rawURL) > 2000 {
 		fields["url"] = "Enter a valid HTTPS webhook URL."
 	}
 	return fields

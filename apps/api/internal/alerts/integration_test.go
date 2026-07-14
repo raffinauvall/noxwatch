@@ -106,6 +106,13 @@ func TestAlertLifecycleWebhookAndIsolationIntegration(t *testing.T) {
 	if err != nil || len(outsiderEvents) != 0 {
 		t.Fatalf("outsider events=%+v err=%v", outsiderEvents, err)
 	}
+	workspaceEvents, err := service.WorkspaceEvents(ctx, ownerID, workspaceID)
+	if err != nil || len(workspaceEvents) != 2 {
+		t.Fatalf("workspace events=%+v err=%v", workspaceEvents, err)
+	}
+	if outsiderEvents, err := service.WorkspaceEvents(ctx, outsiderID, workspaceID); err != nil || len(outsiderEvents) != 0 {
+		t.Fatalf("outsider workspace events=%+v err=%v", outsiderEvents, err)
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if len(bodies) != 2 {
