@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Bell, Plus, RotateCcw, Server, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Bell, Plus, RotateCcw, Server, ShieldCheck } from "lucide-react";
 import { useAuth } from "@/app/providers";
 import { type AlertEvent, type ServerRecord, type Workspace } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -104,20 +104,20 @@ export default function Home() {
               <p className="mt-2 text-sm leading-6 text-muted">Generate a short-lived enrollment token, then connect the local Linux agent binary.</p>
               <div className="mt-5 flex items-center justify-center gap-2 text-xs text-muted"><ShieldCheck className="h-4 w-4 text-accent" />Workspace access is isolated and audited</div>
             </div>
-          </section> : <section id="servers" className="overflow-hidden rounded-lg border border-panel-border bg-panel">
-            <div className="border-b border-panel-border px-4 py-3"><h2 className="text-sm font-semibold">Servers</h2></div>
-            <div className="overflow-x-auto"><table className="w-full min-w-[820px] text-left text-sm">
-              <thead className="text-muted"><tr><th className="px-4 py-3 font-medium">Server</th><th className="px-4 py-3 font-medium">Status</th><th className="px-4 py-3 font-medium">CPU</th><th className="px-4 py-3 font-medium">Memory</th><th className="px-4 py-3 font-medium">Disk</th><th className="px-4 py-3 font-medium">Uptime</th><th className="px-4 py-3 font-medium">Last seen</th></tr></thead>
-              <tbody>{serverRows.map((server) => <tr key={server.id} className="border-t border-panel-border">
-                <td className="px-4 py-4"><Link href={`/servers/${server.id}`} className="font-medium hover:text-accent">{server.name}</Link><p className="mt-1 text-xs text-muted">{server.hostname || "Awaiting identity"} · {server.environment}</p></td>
-                <td className="px-4 py-4"><StatusPill status={server.status} /></td>
-                <td className="px-4 py-4 font-mono text-xs">{formatPercent(server.cpu_usage_percent)}</td>
-                <td className="px-4 py-4 font-mono text-xs">{formatPercent(server.memory_usage_percent)}</td>
-                <td className="px-4 py-4 font-mono text-xs">{formatPercent(server.disk_usage_percent)}</td>
-                <td className="px-4 py-4 text-muted">{formatUptime(server.uptime_seconds)}</td>
-                <td className="px-4 py-4 text-muted">{formatTime(server.last_seen_at)}</td>
-              </tr>)}</tbody>
-            </table></div>
+          </section> : <section id="servers">
+            <div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-semibold">Servers</h2><Link href="/servers" className="flex items-center gap-1 text-xs text-muted hover:text-accent">View all<ArrowUpRight className="h-3.5 w-3.5" /></Link></div>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{serverRows.map((server) => <Link key={server.id} href={`/servers/${server.id}`} className="group rounded-lg border border-panel-border bg-panel p-4 transition hover:border-accent/40 hover:bg-panel/80">
+              <div className="flex min-w-0 items-start justify-between gap-4">
+                <div className="flex min-w-0 gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-panel-border bg-background"><Server className="h-4 w-4 text-muted" /></span><div className="min-w-0"><h3 className="truncate text-sm font-semibold group-hover:text-accent">{server.name}</h3><p className="mt-1 truncate text-xs text-muted">{server.hostname || "Awaiting identity"} · {server.environment}</p></div></div>
+                <StatusPill status={server.status} />
+              </div>
+              <div className="mt-5 grid grid-cols-3 gap-4">
+                <ResourceMetric label="CPU" value={server.cpu_usage_percent} />
+                <ResourceMetric label="Memory" value={server.memory_usage_percent} />
+                <ResourceMetric label="Disk" value={server.disk_usage_percent} />
+              </div>
+              <div className="mt-5 flex items-center justify-between gap-4 border-t border-panel-border pt-3 text-xs text-muted"><span>Uptime <strong className="ml-1 font-medium text-foreground">{formatUptime(server.uptime_seconds)}</strong></span><span className="truncate">Seen {formatTime(server.last_seen_at)}</span></div>
+            </Link>)}</div>
           </section>}
         </div>
     </DashboardShell>
@@ -125,6 +125,10 @@ export default function Home() {
 }
 
 function formatPercent(value: number | null) { return value == null ? "—" : `${value.toFixed(1)}%`; }
+function ResourceMetric({ label, value }: { label: string; value: number | null }) {
+  const width = value == null ? 0 : Math.min(100, Math.max(0, value));
+  return <div className="min-w-0"><div className="flex items-baseline justify-between gap-2"><span className="text-xs text-muted">{label}</span><span className="font-mono text-xs">{formatPercent(value)}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-background"><span className="block h-full rounded-full bg-accent" style={{ width: `${width}%` }} /></div></div>;
+}
 function average(values: Array<number | null>) { const available = values.filter((value): value is number => value != null); return available.length ? `${(available.reduce((sum, value) => sum + value, 0) / available.length).toFixed(1)}%` : "—"; }
 function formatUptime(value: number | null) {
   if (value == null) return "—";
