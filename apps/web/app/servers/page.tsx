@@ -37,6 +37,7 @@ export default function ServersPage() {
       return auth.request<ServerRecord[]>(`/api/v1/servers?${query}`);
     },
     enabled: Boolean(auth.accessToken && workspace?.id),
+    refetchInterval: 15_000,
   });
 
   useEffect(() => { if (!auth.loading && !auth.user) router.replace("/login"); }, [auth.loading, auth.user, router]);

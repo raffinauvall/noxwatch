@@ -65,6 +65,17 @@ func TestServerLifecycleAndIsolationIntegration(t *testing.T) {
 	if statuses, err := service.Statuses(ctx, outsiderID, workspaceID); err != nil || len(statuses) != 0 {
 		t.Fatalf("outsider statuses=%+v err=%v", statuses, err)
 	}
+	if _, err := db.Exec(ctx, `UPDATE servers SET status='online',last_seen_at=now()-interval '3 minutes' WHERE id=$1`, serverID); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := service.Get(ctx, ownerID, serverID)
+	if err != nil || stale.Status != "offline" {
+		t.Fatalf("stale server=%+v err=%v", stale, err)
+	}
+	listed, err = service.List(ctx, ownerID, workspaceID, ListOptions{Limit: 10, Status: "offline"})
+	if err != nil || len(listed) != 1 || listed[0].ID != serverID {
+		t.Fatalf("stale filtered servers=%+v err=%v", listed, err)
+	}
 	if err := service.Delete(ctx, outsiderID, serverID, ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("outsider delete returned %v", err)
 	}
