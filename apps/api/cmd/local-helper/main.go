@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -23,6 +24,7 @@ import (
 )
 
 type bootstrapRequest struct {
+	ProfileID   string `json:"profile_id"`
 	Target      string `json:"target"`
 	Port        string `json:"port"`
 	Endpoint    string `json:"endpoint"`
@@ -32,20 +34,32 @@ type bootstrapRequest struct {
 }
 
 type helper struct {
-	origin string
-	launch func(bootstrapRequest) error
+	origin        string
+	localAPIPort  string
+	store         *tunnelStore
+	launch        func(bootstrapRequest, string) error
+	launchTunnels func() error
+	launchTunnel  func(string) error
 }
 
 var (
 	safeTarget = regexp.MustCompile(`^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+$`)
 	safeToken  = regexp.MustCompile(`^nox_enroll_[A-Za-z0-9_-]{20,}$`)
+	safeID     = regexp.MustCompile(`^[A-Za-z0-9_-]{8,64}$`)
 )
 
 func main() {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		log.Fatal(err)
+	}
 	addr := flag.String("addr", "127.0.0.1:9734", "local helper address")
 	origin := flag.String("origin", "http://localhost:3000", "allowed dashboard origin")
 	repoRoot := flag.String("repo-root", ".", "NoxWatch repository root")
 	localAPIPort := flag.String("local-api-port", "8080", "host port of the local NoxWatch API")
+	profilesPath := flag.String("tunnel-profiles", filepath.Join(configDir, "noxwatch", "tunnels.json"), "local tunnel profile file")
+	runTunnelProfiles := flag.String("run-tunnels", "", "start profiles from a local tunnel profile file")
+	runTunnelID := flag.String("tunnel-id", "", "start only one tunnel profile")
 	flag.Parse()
 	if err := validatePort(*localAPIPort); err != nil {
 		log.Fatal("invalid local API port")
@@ -55,14 +69,31 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	launch, terminal, err := terminalLauncher(root, *localAPIPort)
+	store, err := newTunnelStore(*profilesPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if *runTunnelProfiles != "" {
+		runStore, err := newTunnelStore(*runTunnelProfiles)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if *runTunnelID != "" && !safeID.MatchString(*runTunnelID) {
+			log.Fatal("invalid tunnel profile ID")
+		}
+		if err := runTunnels(root, runStore, *runTunnelID); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	launch, launchTunnels, launchTunnel, terminal, err := terminalLauncher(root, *localAPIPort, *profilesPath)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	server := &http.Server{
 		Addr:              *addr,
-		Handler:           helper{origin: strings.TrimRight(*origin, "/"), launch: launch},
+		Handler:           helper{origin: strings.TrimRight(*origin, "/"), localAPIPort: *localAPIPort, store: store, launch: launch, launchTunnels: launchTunnels, launchTunnel: launchTunnel},
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -81,7 +112,7 @@ func main() {
 }
 
 func (h helper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/bootstrap" {
+	if !slices.Contains([]string{"/bootstrap", "/tunnels", "/tunnels/register", "/tunnels/start", "/tunnels/stop", "/tunnels/start-all", "/tunnels/stop-all"}, r.URL.Path) {
 		http.NotFound(w, r)
 		return
 	}
@@ -91,17 +122,106 @@ func (h helper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Access-Control-Allow-Origin", h.origin)
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 	w.Header().Set("Vary", "Origin")
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	switch r.URL.Path {
+	case "/bootstrap":
+		h.bootstrap(w, r)
+	case "/tunnels":
+		h.tunnels(w, r)
+	case "/tunnels/register":
+		h.registerTunnel(w, r)
+	case "/tunnels/start":
+		h.startTunnel(w, r)
+	case "/tunnels/stop":
+		h.stopTunnel(w, r)
+	case "/tunnels/start-all":
+		h.startAll(w, r)
+	case "/tunnels/stop-all":
+		h.stopAll(w, r)
+	}
+}
+
+func (h helper) registerTunnel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	var profile tunnelProfile
+	if !decodeLocalRequest(w, r, &profile) {
+		return
+	}
+	profile.LocalPort = h.localAPIPort
+	if err := h.store.save(profile); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid tunnel profile"})
+		return
+	}
+	writeJSON(w, http.StatusOK, profile)
+}
 
+func (h helper) startTunnel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var input struct {
+		ID string `json:"id"`
+	}
+	if !decodeLocalRequest(w, r, &input) {
+		return
+	}
+	if !safeID.MatchString(input.ID) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid tunnel profile ID"})
+		return
+	}
+	profile, ok := h.store.find(input.ID)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "tunnel profile not found"})
+		return
+	}
+	if err := h.launchTunnel(profile.ID); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "could not open a local terminal"})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "terminal opened"})
+}
+
+func (h helper) stopTunnel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var input struct {
+		ID string `json:"id"`
+	}
+	if !decodeLocalRequest(w, r, &input) {
+		return
+	}
+	if !safeID.MatchString(input.ID) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid tunnel profile ID"})
+		return
+	}
+	profile, ok := h.store.find(input.ID)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "tunnel profile not found"})
+		return
+	}
+	if err := stopTunnel(profile, h.store.controlPath(profile.ID)); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "tunnel could not be stopped"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
+}
+
+func (h helper) bootstrap(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
 	var input bootstrapRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10))
 	decoder.DisallowUnknownFields()
@@ -117,7 +237,21 @@ func (h helper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := h.launch(input); err != nil {
+	controlPath := ""
+	if _, remotePort, reverse := reverseTunnel(input.Endpoint); reverse {
+		profile := tunnelProfile{ID: input.ProfileID, Name: input.ServerName, Target: input.Target, Port: input.Port, LocalPort: h.localAPIPort, RemotePort: remotePort}
+		if err := h.store.save(profile); err != nil {
+			log.Printf("save tunnel profile failed: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not save the local tunnel profile"})
+			return
+		}
+		controlPath = h.store.controlPath(profile.ID)
+		if err := os.MkdirAll(h.store.stateDir, 0o700); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not prepare local tunnel state"})
+			return
+		}
+	}
+	if err := h.launch(input, controlPath); err != nil {
 		log.Printf("bootstrap terminal launch failed: %v", err)
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "could not open a local terminal"})
 		return
@@ -125,7 +259,55 @@ func (h helper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "terminal opened"})
 }
 
+func (h helper) tunnels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	profiles := h.store.all()
+	statuses := make([]tunnelStatus, 0, len(profiles))
+	for _, profile := range profiles {
+		statuses = append(statuses, tunnelStatus{tunnelProfile: profile, Running: tunnelRunning(profile, h.store.controlPath(profile.ID))})
+	}
+	writeJSON(w, http.StatusOK, statuses)
+}
+
+func (h helper) startAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if len(h.store.all()) == 0 {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "no local tunnel profiles are configured"})
+		return
+	}
+	if err := h.launchTunnels(); err != nil {
+		log.Printf("tunnel terminal launch failed: %v", err)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "could not open a local terminal"})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "terminal opened"})
+}
+
+func (h helper) stopAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	for _, profile := range h.store.all() {
+		if err := stopTunnel(profile, h.store.controlPath(profile.ID)); err != nil {
+			log.Printf("stop tunnel failed for %s: %v", profile.ID, err)
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "one or more tunnels could not be stopped"})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
+}
+
 func validate(input bootstrapRequest) error {
+	if !safeID.MatchString(input.ProfileID) {
+		return errors.New("invalid tunnel profile ID")
+	}
 	if !safeTarget.MatchString(input.Target) {
 		return errors.New("invalid SSH target")
 	}
@@ -176,14 +358,19 @@ func reverseTunnel(endpoint string) (string, string, bool) {
 	return parsed.String(), port, true
 }
 
-func terminalLauncher(repoRoot, localAPIPort string) (func(bootstrapRequest) error, string, error) {
+func terminalLauncher(repoRoot, localAPIPort, profilesPath string) (func(bootstrapRequest, string) error, func() error, func(string) error, string, error) {
 	script := filepath.Join(repoRoot, "deployments", "scripts", "bootstrap-ssh.sh")
 	binary := filepath.Join(repoRoot, "dist", "noxwatch-agent")
 	service := filepath.Join(repoRoot, "deployments", "systemd", "noxwatch-agent.service")
-	for _, path := range []string{script, binary, service} {
+	wrapper := filepath.Join(repoRoot, "deployments", "scripts", "terminal-command.sh")
+	for _, path := range []string{script, binary, service, wrapper} {
 		if _, err := os.Stat(path); err != nil {
-			return nil, "", fmt.Errorf("required file is missing: %s", path)
+			return nil, nil, nil, "", fmt.Errorf("required file is missing: %s", path)
 		}
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, nil, nil, "", err
 	}
 
 	type candidate struct {
@@ -191,21 +378,31 @@ func terminalLauncher(repoRoot, localAPIPort string) (func(bootstrapRequest) err
 		prefix []string
 	}
 	candidates := []candidate{
-		{name: "kitty", prefix: []string{"--detach", "--hold"}},
+		{name: "kitty", prefix: []string{"--detach"}},
 		{name: "xdg-terminal-exec"},
 		{name: "alacritty", prefix: []string{"-e"}},
-		{name: "foot", prefix: []string{"--hold"}},
-		{name: "xterm", prefix: []string{"-hold", "-e"}},
+		{name: "foot"},
+		{name: "xterm", prefix: []string{"-e"}},
 	}
 	for _, item := range candidates {
 		terminal, err := exec.LookPath(item.name)
 		if err != nil {
 			continue
 		}
-		return func(input bootstrapRequest) error {
-			endpoint, remotePort, reverse := reverseTunnel(input.Endpoint)
+		open := func(command ...string) error {
 			args := append([]string{}, item.prefix...)
-			args = append(args, script,
+			args = append(args, wrapper)
+			args = append(args, command...)
+			cmd := exec.Command(terminal, args...)
+			cmd.Dir = repoRoot
+			if err := cmd.Start(); err != nil {
+				return err
+			}
+			return cmd.Process.Release()
+		}
+		launchBootstrap := func(input bootstrapRequest, controlPath string) error {
+			endpoint, remotePort, reverse := reverseTunnel(input.Endpoint)
+			args := []string{script,
 				"--target", input.Target,
 				"--port", input.Port,
 				"--endpoint", endpoint,
@@ -214,19 +411,38 @@ func terminalLauncher(repoRoot, localAPIPort string) (func(bootstrapRequest) err
 				"--environment", input.Environment,
 				"--binary", binary,
 				"--service", service,
-			)
+			}
 			if reverse {
 				args = append(args, "--reverse-local-port", localAPIPort, "--reverse-remote-port", remotePort)
 			}
-			cmd := exec.Command(terminal, args...)
-			cmd.Dir = repoRoot
-			if err := cmd.Start(); err != nil {
-				return err
+			if controlPath != "" {
+				args = append(args, "--control-path", controlPath)
 			}
-			return cmd.Process.Release()
-		}, item.name, nil
+			return open(args...)
+		}
+		launchAll := func() error {
+			return open(executable, "-run-tunnels", profilesPath, "-repo-root", repoRoot)
+		}
+		launchOne := func(id string) error {
+			return open(executable, "-run-tunnels", profilesPath, "-tunnel-id", id, "-repo-root", repoRoot)
+		}
+		return launchBootstrap, launchAll, launchOne, item.name, nil
 	}
-	return nil, "", errors.New("no supported terminal found (kitty, xdg-terminal-exec, alacritty, foot, or xterm)")
+	return nil, nil, nil, "", errors.New("no supported terminal found (kitty, xdg-terminal-exec, alacritty, foot, or xterm)")
+}
+
+func decodeLocalRequest(w http.ResponseWriter, r *http.Request, target any) bool {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return false
+	}
+	return true
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

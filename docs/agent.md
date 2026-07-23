@@ -44,7 +44,7 @@ During first enrollment, a loopback Agent API endpoint makes the generated boots
   --token nox_enroll_example --server-name local-api --environment development
 ```
 
-The command installs and enrolls the agent, then stays open to keep the tunnel alive. `Open in terminal` generates and runs this command through the local helper.
+With the local helper, the command installs and enrolls the agent, leaves the tunnel running in the background, and closes the terminal after success. Failed commands remain visible in the terminal. The helper stores only the validated SSH target and ports in `~/.config/noxwatch/tunnels.json`; it never stores SSH passwords.
 
 For later sessions, reconnect an already-enrolled server from the laptop:
 
@@ -54,7 +54,7 @@ make ssh-tunnel SSH_TARGET=deploy@203.0.113.10
 
 `API_PORT` is loaded from `.env`; override `SSH_PORT` or `REMOTE_API_PORT` on the command line when needed. Keep the command running and use `http://127.0.0.1:18082` as the reachable API endpoint in Add Server. The agent connects to server loopback, and OpenSSH carries that traffic to the laptop API over the encrypted session. The remote port is not exposed publicly.
 
-After the first enrollment, start the same tunnel whenever the local NoxWatch stack runs. The agent retries automatically while the tunnel is unavailable; no new enrollment token or agent configuration is required.
+After the first enrollment, use **Start all tunnels** on the overview whenever the laptop starts. Install the helper once with `make local-helper-install` to make it available automatically after desktop login. The agent retries while a tunnel is unavailable; no new enrollment token or agent configuration is required.
 
 The runtime sends heartbeats every 20 seconds and metrics every 45 seconds by default. Failed metric deliveries use exponential backoff and remain in a bounded in-memory queue of 100 samples; oldest samples are dropped when that ceiling is reached.
 

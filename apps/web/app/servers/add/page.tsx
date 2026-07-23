@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
@@ -9,6 +9,7 @@ import { Check, ChevronLeft, ChevronRight, CircleDashed, Clipboard, FlaskConical
 import { useAuth } from "@/app/providers";
 import { type Workspace } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { localHelper } from "@/lib/local-helper";
 
 const schema = z.object({
   name: z.string().trim().min(1, "Server name is required.").max(100),
@@ -35,6 +36,7 @@ export default function AddServerPage() {
   const [sshHost, setSSHHost] = useState("");
   const [sshPort, setSSHPort] = useState("22");
   const [apiEndpoint, setAPIEndpoint] = useState("http://127.0.0.1:18082");
+  const registeredTunnel = useRef("");
   const workspaces = useQuery({ queryKey: ["workspaces"], queryFn: () => auth.request<Workspace[]>("/api/v1/workspaces"), enabled: Boolean(auth.accessToken) });
   const { register, handleSubmit, setError, formState: { errors } } = useForm<Values>({ defaultValues: { environment: "production", tags: "", description: "" } });
   const workspace = workspaces.data?.[0];
@@ -52,6 +54,24 @@ export default function AddServerPage() {
 
   const activeStep = status.data?.status === "connected" ? 5 : step;
   const activeEnrollment = status.data?.status === "connected" ? status.data : enrollment;
+
+  useEffect(() => {
+    const serverID = status.data?.server_id;
+    const remotePort = loopbackPort(apiEndpoint);
+    if (!serverID || !enrollment?.id || method !== "ssh" || !remotePort || registeredTunnel.current === serverID) return;
+    registeredTunnel.current = serverID;
+    void localHelper("/tunnels/register", "POST", {
+      id: enrollment.id,
+      server_id: serverID,
+      name: details?.name ?? "server",
+      target: `${sshUser}@${sshHost}`,
+      port: sshPort,
+      remote_port: remotePort,
+    }).catch((error) => {
+      registeredTunnel.current = "";
+      setHelperError(error instanceof Error ? error.message : "Tunnel profile could not be saved.");
+    });
+  }, [apiEndpoint, details?.name, enrollment?.id, method, sshHost, sshPort, sshUser, status.data?.server_id]);
 
   const submitInfo = handleSubmit((values) => {
     const parsed = schema.safeParse(values);
@@ -110,6 +130,7 @@ export default function AddServerPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          profile_id: enrollment.id,
           target: `${sshUser}@${sshHost}`,
           port: sshPort,
           endpoint: apiEndpoint,
@@ -181,7 +202,7 @@ export default function AddServerPage() {
         <pre className="mt-6 overflow-x-auto rounded-md border border-panel-border bg-[#050c12] p-4 text-xs leading-6 text-[#b9cad9]"><code>{command}</code></pre>
         <div className="mt-4 flex flex-wrap gap-3">{method === "ssh" && <Button onClick={openInTerminal} disabled={openingTerminal}><Terminal className="h-4 w-4" />{openingTerminal ? "Opening..." : terminalOpened ? "Terminal opened" : "Open in terminal"}</Button>}<Button variant="secondary" onClick={async () => { await navigator.clipboard.writeText(command); setCopied(true); setTimeout(() => setCopied(false), 1500); }}>{copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}{copied ? "Copied" : "Copy command"}</Button><Button variant="secondary" onClick={regenerate}><RefreshCw className="h-4 w-4" />Regenerate</Button></div>
         {helperError && <p className="mt-3 text-sm text-danger" role="alert">{helperError}</p>}
-        <div className="mt-8 border-t border-panel-border pt-6 text-sm text-muted"><p>{method === "ssh" ? "Open in terminal uses the local helper; SSH and sudo passwords stay in that terminal. A loopback endpoint keeps its reverse tunnel active in the same terminal." : "Supported: systemd-based x86_64 and arm64 Linux hosts. The agent must already be installed at /usr/local/bin/noxwatch-agent."}</p><p className="mt-2">The command transfers only the short-lived token. Permanent credentials are returned directly to the agent and saved with mode 0600.</p></div>
+        <div className="mt-8 border-t border-panel-border pt-6 text-sm text-muted"><p>{method === "ssh" ? "Open in terminal uses the local helper; SSH and sudo passwords stay in that terminal. After a loopback tunnel connects, it keeps running in background and the terminal closes automatically." : "Supported: systemd-based x86_64 and arm64 Linux hosts. The agent must already be installed at /usr/local/bin/noxwatch-agent."}</p><p className="mt-2">The command transfers only the short-lived token. Permanent credentials are returned directly to the agent and saved with mode 0600.</p></div>
         <div className="mt-8 flex justify-between"><Button variant="secondary" onClick={() => { void revoke(); router.push("/"); }}>Cancel</Button><Button onClick={() => setStep(4)}>I started the agent<ChevronRight className="h-4 w-4" /></Button></div>
       </section>}
 

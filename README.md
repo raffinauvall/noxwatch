@@ -57,6 +57,8 @@ Open `http://localhost:3000`. Seed login:
 - Email: `demo@noxwatch.local`
 - Password: the local `SEED_DEMO_PASSWORD` value
 
+After signing in, open the dashboard's **Guide** tab for first-time setup, enrollment, daily tunnel operation, security notes, and troubleshooting commands.
+
 Seed execution is rejected unless `APP_ENV=development`. It is idempotent and creates three clearly simulated servers with 24 hours of typed metric history and a sample alert.
 
 To run the complete container stack instead:
@@ -75,6 +77,7 @@ make api-dev             # Run the Go API on the host
 make web-dev             # Run Next.js on the host
 make ssh-tunnel SSH_TARGET=user@host  # Link a remote agent to the local API
 make local-helper        # Enable Add Server's Open in terminal button
+make local-helper-install # Start the helper automatically after desktop login
 make migrate-up          # Apply pending migrations
 make migrate-down        # Roll back the latest migration
 make seed                # Idempotent development-only demo data
@@ -105,7 +108,15 @@ To launch SSH bootstrap directly from Add Server, keep the local helper running 
 make local-helper
 ```
 
-The helper binds only to `127.0.0.1:9734`, accepts requests only from `PUBLIC_WEB_URL`, validates every bootstrap field, and opens the existing bootstrap script in a local terminal. When the Agent API endpoint is loopback (the default `http://127.0.0.1:18082`), the same SSH session creates the reverse tunnel, enrolls the agent, and stays open to keep that tunnel alive. The copyable command remains available when the helper is not running.
+The helper binds only to `127.0.0.1:9734`, accepts requests only from `PUBLIC_WEB_URL`, validates every bootstrap field, and opens the existing bootstrap script in a local terminal. When the Agent API endpoint is loopback (the default `http://127.0.0.1:18082`), the SSH tunnel moves to the background after enrollment and the terminal closes automatically. The dashboard can then start or stop all saved tunnels. Profiles contain only the SSH target and ports; passwords remain terminal-only and are never stored.
+
+For the dashboard controls to work after a laptop restart, install the helper as a user service once:
+
+```bash
+make local-helper-install
+```
+
+It starts after desktop login. **Start all tunnels** opens one terminal, prompts only where OpenSSH needs authentication, starts each tunnel in the background, and closes after success.
 
 For an already-enrolled server outside the local network, reconnect its reverse SSH tunnel with:
 
@@ -113,7 +124,7 @@ For an already-enrolled server outside the local network, reconnect its reverse 
 make ssh-tunnel SSH_TARGET=deploy@203.0.113.10
 ```
 
-Then enter `http://127.0.0.1:18082` as the reachable API endpoint during SSH bootstrap. On later starts, run the same tunnel command; the saved agent endpoint does not change. See [docs/agent.md](docs/agent.md#reverse-ssh-tunnel).
+Then enter `http://127.0.0.1:18082` as the reachable API endpoint during SSH bootstrap. On later starts, use **Start all tunnels**; the saved agent endpoint does not change. See [docs/agent.md](docs/agent.md#reverse-ssh-tunnel).
 
 The enrollment token is stored only as a SHA-256 hash, expires after 15 minutes, and is returned once. After enrollment, the agent removes the token file and atomically writes its permanent credential with mode `0600`. See [docs/agent.md](docs/agent.md).
 

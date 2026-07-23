@@ -6,6 +6,7 @@ SCRIPT=./deployments/scripts/reverse-tunnel-ssh.sh
 valid() {
 	NOXWATCH_TUNNEL_VALIDATE_ONLY=1 "$SCRIPT" --target deploy@192.0.2.10 --port 22 --local-port 8082 --remote-port 18082
 	NOXWATCH_TUNNEL_VALIDATE_ONLY=1 "$SCRIPT" --target deploy@server-alias
+	NOXWATCH_TUNNEL_VALIDATE_ONLY=1 "$SCRIPT" --target deploy@server-alias --background --control-path /tmp/noxwatch-test.sock
 }
 
 invalid() {
@@ -21,4 +22,6 @@ invalid --target '-oProxyCommand=bad@host'
 invalid --target deploy@host --port 70000
 invalid --target deploy@host --local-port invalid
 invalid --target deploy@host --remote-port 0
+invalid --target deploy@host --background
+invalid --target deploy@host --background --control-path relative.sock
 printf 'SSH reverse tunnel validation tests passed.\n'

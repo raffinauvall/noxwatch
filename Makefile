@@ -7,7 +7,7 @@ include .env
 export
 endif
 
-.PHONY: dev build test lint migrate-up migrate-down seed agent-build agent-install-local api-dev web-dev ssh-tunnel local-helper
+.PHONY: dev build test lint migrate-up migrate-down seed agent-build agent-install-local api-dev web-dev ssh-tunnel local-helper local-helper-build local-helper-install
 
 API_PORT ?= 8080
 REMOTE_API_PORT ?= 18082
@@ -29,9 +29,17 @@ ssh-tunnel:
 local-helper: agent-build
 	cd apps/api && go run ./cmd/local-helper -repo-root ../.. -origin "$(PUBLIC_WEB_URL)" -addr "$(LOCAL_HELPER_ADDR)" -local-api-port "$(API_PORT)"
 
+local-helper-build:
+	mkdir -p dist
+	cd apps/api && go build -o ../../dist/noxwatch-local-helper ./cmd/local-helper
+
+local-helper-install: agent-build local-helper-build
+	./deployments/scripts/install-local-helper.sh --repo-root "$(CURDIR)" --origin "$(PUBLIC_WEB_URL)" --addr "$(LOCAL_HELPER_ADDR)" --local-api-port "$(API_PORT)"
+
 build:
 	cd apps/api && go build ./cmd/api
 	$(MAKE) agent-build
+	$(MAKE) local-helper-build
 	npm --workspace apps/web run build
 
 test:

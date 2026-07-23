@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Activity, Bell, Boxes, LayoutDashboard, LogOut, Moon, Plug, Sun } from "lucide-react";
+import { Activity, Bell, BookOpen, Boxes, LayoutDashboard, LogOut, Moon, Plug, Sun } from "lucide-react";
 import { useAuth } from "@/app/providers";
 import { type Workspace } from "@/lib/api";
 
@@ -12,6 +12,7 @@ const navigation = [
   { label: "Servers", href: "/servers", icon: Boxes },
   { label: "Alerts", href: "/alerts", icon: Bell },
   { label: "Integrations", href: "/integrations", icon: Plug },
+  { label: "Guide", href: "/guide", icon: BookOpen },
 ];
 
 export function DashboardShell({ workspace, title, description, action, children }: { workspace: Workspace; title: string; description?: string; action?: React.ReactNode; children: React.ReactNode }) {

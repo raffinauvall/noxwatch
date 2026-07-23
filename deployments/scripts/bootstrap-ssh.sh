@@ -7,7 +7,7 @@ fail() {
 }
 
 usage() {
-	printf '%s\n' 'usage: bootstrap-ssh.sh --target user@host --endpoint URL --token TOKEN --server-name NAME --environment ENV [--port 22] [--binary PATH] [--reverse-local-port PORT --reverse-remote-port PORT]'
+	printf '%s\n' 'usage: bootstrap-ssh.sh --target user@host --endpoint URL --token TOKEN --server-name NAME --environment ENV [--port 22] [--binary PATH] [--reverse-local-port PORT --reverse-remote-port PORT] [--control-path PATH]'
 	exit 2
 }
 
@@ -21,10 +21,11 @@ BINARY=./dist/noxwatch-agent
 SERVICE=./deployments/systemd/noxwatch-agent.service
 REVERSE_LOCAL_PORT=
 REVERSE_REMOTE_PORT=
+CONTROL_PATH=
 
 while [ "$#" -gt 0 ]; do
 	case "$1" in
-		--target|--endpoint|--token|--server-name|--environment|--port|--binary|--service|--reverse-local-port|--reverse-remote-port)
+		--target|--endpoint|--token|--server-name|--environment|--port|--binary|--service|--reverse-local-port|--reverse-remote-port|--control-path)
 			[ "$#" -ge 2 ] || usage
 			case "$1" in
 				--target) TARGET=$2 ;;
@@ -37,6 +38,7 @@ while [ "$#" -gt 0 ]; do
 				--service) SERVICE=$2 ;;
 				--reverse-local-port) REVERSE_LOCAL_PORT=$2 ;;
 				--reverse-remote-port) REVERSE_REMOTE_PORT=$2 ;;
+				--control-path) CONTROL_PATH=$2 ;;
 			esac
 			shift 2
 			;;
@@ -58,6 +60,10 @@ if [ -n "$REVERSE_LOCAL_PORT" ] || [ -n "$REVERSE_REMOTE_PORT" ]; then
 		case "$VALUE" in ''|*[!0-9]*) fail 'reverse tunnel ports must be numeric' ;; esac
 		[ "$VALUE" -ge 1 ] && [ "$VALUE" -le 65535 ] || fail 'reverse tunnel ports must be between 1 and 65535'
 	done
+fi
+if [ -n "$CONTROL_PATH" ]; then
+	case "$CONTROL_PATH" in /*) ;; *) fail 'control path must be absolute' ;; esac
+	[ -n "$REVERSE_LOCAL_PORT" ] || fail 'control path requires a reverse tunnel'
 fi
 case "$ENDPOINT" in
 	https://*) ALLOW_INSECURE=false ;;
@@ -81,13 +87,18 @@ command -v scp >/dev/null 2>&1 || fail 'scp is required'
 
 umask 077
 TMP=$(mktemp -d)
-CONTROL=$TMP/ssh-control
+[ -n "$CONTROL_PATH" ] || CONTROL_PATH=$TMP/ssh-control
+CONTROL=$CONTROL_PATH
 REMOTE_DIR=
+KEEP_TUNNEL=false
+CREATED_CONTROL=false
 cleanup() {
 	if [ -n "$REMOTE_DIR" ]; then
 		ssh -S "$CONTROL" -p "$PORT" "$TARGET" "rm -rf '$REMOTE_DIR'" >/dev/null 2>&1 || true
 	fi
-	ssh -S "$CONTROL" -O exit "$TARGET" >/dev/null 2>&1 || true
+	if [ "$CREATED_CONTROL" = true ] && [ "$KEEP_TUNNEL" = false ]; then
+		ssh -S "$CONTROL" -O exit "$TARGET" >/dev/null 2>&1 || true
+	fi
 	rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -100,11 +111,21 @@ printf "endpoint: '%s'\nserver_name: '%s'\nenvironment: %s\nenrollment_file: /et
 	"$ENDPOINT" "$SERVER_NAME" "$ENVIRONMENT" "$ALLOW_INSECURE" >"$TMP/agent.yaml"
 
 printf 'Connecting to %s. Enter the SSH password when prompted.\n' "$TARGET"
-if [ -n "$REVERSE_LOCAL_PORT" ]; then
-	ssh -M -S "$CONTROL" -o ControlPersist=60 -o ExitOnForwardFailure=yes -fN -p "$PORT" \
-		-R "127.0.0.1:$REVERSE_REMOTE_PORT:127.0.0.1:$REVERSE_LOCAL_PORT" "$TARGET"
+if ssh -S "$CONTROL" -O check -p "$PORT" "$TARGET" >/dev/null 2>&1; then
+	:
+elif [ -n "$REVERSE_LOCAL_PORT" ]; then
+	rm -f -- "$CONTROL"
+	if [ "$CONTROL" = "$TMP/ssh-control" ]; then
+		ssh -M -S "$CONTROL" -o ControlPersist=60 -o ExitOnForwardFailure=yes -fN -p "$PORT" \
+			-R "127.0.0.1:$REVERSE_REMOTE_PORT:127.0.0.1:$REVERSE_LOCAL_PORT" "$TARGET"
+	else
+		ssh -M -S "$CONTROL" -o ExitOnForwardFailure=yes -fN -p "$PORT" \
+			-R "127.0.0.1:$REVERSE_REMOTE_PORT:127.0.0.1:$REVERSE_LOCAL_PORT" "$TARGET"
+	fi
+	CREATED_CONTROL=true
 else
 	ssh -M -S "$CONTROL" -o ControlPersist=60 -fN -p "$PORT" "$TARGET"
+	CREATED_CONTROL=true
 fi
 REMOTE_DIR=$(ssh -S "$CONTROL" -p "$PORT" "$TARGET" 'mktemp -d /tmp/noxwatch-bootstrap.XXXXXX')
 case "$REMOTE_DIR" in /tmp/noxwatch-bootstrap.*) ;; *) fail 'remote temporary directory is invalid' ;; esac
@@ -115,6 +136,11 @@ ssh -t -S "$CONTROL" -p "$PORT" "$TARGET" "set -eu; trap 'rm -rf \"$REMOTE_DIR\"
 REMOTE_DIR=
 printf 'NoxWatch agent installed on %s.\n' "$TARGET"
 if [ -n "$REVERSE_LOCAL_PORT" ]; then
+	if [ -n "$CONTROL_PATH" ] && [ "$CONTROL" != "$TMP/ssh-control" ]; then
+		KEEP_TUNNEL=true
+		printf 'Reverse tunnel is active in background: server localhost:%s -> local API localhost:%s.\n' "$REVERSE_REMOTE_PORT" "$REVERSE_LOCAL_PORT"
+		exit 0
+	fi
 	printf 'Reverse tunnel is active: server localhost:%s -> local API localhost:%s. Press Ctrl+C to stop.\n' "$REVERSE_REMOTE_PORT" "$REVERSE_LOCAL_PORT"
 	while ssh -S "$CONTROL" -O check -p "$PORT" "$TARGET" >/dev/null 2>&1; do
 		sleep 5

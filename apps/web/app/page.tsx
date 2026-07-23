@@ -1,21 +1,24 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowUpRight, Bell, Plus, RotateCcw, Server, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Bell, Cable, Plus, RotateCcw, Server, ShieldCheck, Square } from "lucide-react";
 import { useAuth } from "@/app/providers";
 import { type AlertEvent, type ServerRecord, type Workspace } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/status-pill";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { parseSSE } from "@/lib/sse.mjs";
+import { localHelper, type TunnelStatus } from "@/lib/local-helper";
 
 export default function Home() {
   const router = useRouter();
   const auth = useAuth();
 	const queryClient = useQueryClient();
+  const [tunnelAction, setTunnelAction] = useState(false);
+  const [tunnelError, setTunnelError] = useState("");
   const workspaces = useQuery({
     queryKey: ["workspaces"],
     queryFn: () => auth.request<Workspace[]>("/api/v1/workspaces"),
@@ -29,6 +32,7 @@ export default function Home() {
     refetchInterval: 20_000,
   });
   const alerts = useQuery({ queryKey: ["workspace-alerts", workspace?.id], queryFn: () => auth.request<AlertEvent[]>(`/api/v1/alerts?workspace_id=${workspace?.id}`), enabled: Boolean(auth.accessToken && workspace?.id), refetchInterval: 30_000 });
+  const tunnels = useQuery({ queryKey: ["local-tunnels"], queryFn: () => localHelper<TunnelStatus[]>("/tunnels"), retry: false, refetchInterval: 3_000 });
 
   useEffect(() => {
 	if (!auth.accessToken || !workspace?.id) return;
@@ -74,6 +78,22 @@ export default function Home() {
   const serverRows = servers.data ?? [];
   const incidents = alerts.data ?? [];
   const activeAlerts = alerts.isError ? "—" : incidents.filter((event) => event.state === "firing" || event.state === "pending").length;
+  const tunnelRows = tunnels.data ?? [];
+  const runningTunnels = tunnelRows.filter((tunnel) => tunnel.running).length;
+  const allTunnelsRunning = tunnelRows.length > 0 && runningTunnels === tunnelRows.length;
+
+  async function toggleTunnels() {
+    setTunnelAction(true);
+    setTunnelError("");
+    try {
+      await localHelper(allTunnelsRunning ? "/tunnels/stop-all" : "/tunnels/start-all", "POST");
+      await tunnels.refetch();
+    } catch (error) {
+      setTunnelError(error instanceof Error ? error.message : "Tunnel action failed.");
+    } finally {
+      setTunnelAction(false);
+    }
+  }
   const summary = [
     ["Total servers", serverRows.length],
     ["Online", serverRows.filter((server) => server.status === "online").length],
@@ -85,8 +105,9 @@ export default function Home() {
     ["Average disk", average(serverRows.map((server) => server.disk_usage_percent))],
   ] as const;
   return (
-    <DashboardShell workspace={currentWorkspace} title="Overview" action={<Button onClick={() => router.push("/servers/add")}><Plus className="h-4 w-4" />Add Server</Button>}>
+    <DashboardShell workspace={currentWorkspace} title="Overview" action={<div className="flex gap-2"><Button variant="secondary" disabled={tunnels.isError || tunnelRows.length === 0 || tunnelAction} title={tunnels.isError ? "Run make local-helper first" : `${runningTunnels}/${tunnelRows.length} tunnels connected`} onClick={toggleTunnels}>{allTunnelsRunning ? <Square className="h-4 w-4" /> : <Cable className="h-4 w-4" />}{tunnelAction ? "Working..." : allTunnelsRunning ? `Stop all (${runningTunnels})` : `Start all tunnels (${runningTunnels}/${tunnelRows.length})`}</Button><Button onClick={() => router.push("/servers/add")}><Plus className="h-4 w-4" />Add Server</Button></div>}>
         <div className="mx-auto grid max-w-7xl gap-5 px-5 py-6">
+          {tunnelError && <section className="border-l-2 border-danger bg-danger/5 px-4 py-3 text-sm" role="alert">{tunnelError}</section>}
           <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {summary.map(([label, value]) => (
               <div key={label} className="rounded-lg border border-panel-border bg-panel p-4"><p className="text-sm text-muted">{label}</p><p className="mt-2 text-3xl font-semibold">{value}</p></div>

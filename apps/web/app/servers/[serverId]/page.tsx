@@ -4,12 +4,13 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, AlertTriangle, ArrowLeft, Ban, Bell, Cpu, Database, HardDrive, MemoryStick, Network, RotateCcw, Trash2, Wrench } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeft, Ban, Bell, Cable, Cpu, Database, HardDrive, MemoryStick, Network, RotateCcw, Trash2, Wrench } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useAuth } from "@/app/providers";
 import { type AlertEvent, type MetricSample, type MetricSnapshot, type ServerRecord } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/status-pill";
+import { localHelper, type TunnelStatus } from "@/lib/local-helper";
 
 const ranges = [{ label: "1h", hours: 1 }, { label: "6h", hours: 6 }, { label: "24h", hours: 24 }, { label: "7d", hours: 168 }, { label: "30d", hours: 720 }];
 
@@ -19,15 +20,21 @@ export default function ServerPage() {
   const serverID = useParams<{ serverId: string }>().serverId;
   const [hours, setHours] = useState(24);
   const [actionError, setActionError] = useState("");
+  const [sshUser, setSSHUser] = useState("deploy");
+  const [sshHost, setSSHHost] = useState("");
+  const [sshPort, setSSHPort] = useState("22");
+  const [tunnelBusy, setTunnelBusy] = useState(false);
   const server = useQuery({ queryKey: ["server", serverID], queryFn: () => auth.request<ServerRecord>(`/api/v1/servers/${serverID}`), enabled: Boolean(auth.accessToken), refetchInterval: 20_000 });
   const latest = useQuery({ queryKey: ["metrics-latest", serverID], queryFn: () => auth.request<MetricSnapshot>(`/api/v1/servers/${serverID}/metrics/latest`), enabled: Boolean(auth.accessToken), retry: false, refetchInterval: 20_000 });
   const history = useQuery({ queryKey: ["metrics", serverID, hours], queryFn: () => { const to = new Date(); const from = new Date(to.getTime() - hours * 3600_000); return auth.request<MetricSample[]>(`/api/v1/servers/${serverID}/metrics?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}&limit=2000`); }, enabled: Boolean(auth.accessToken), refetchInterval: 20_000 });
   const alerts = useQuery({ queryKey: ["server-alerts", serverID], queryFn: () => auth.request<AlertEvent[]>(`/api/v1/servers/${serverID}/alerts`), enabled: Boolean(auth.accessToken), refetchInterval: 30_000 });
+  const tunnels = useQuery({ queryKey: ["local-tunnels"], queryFn: () => localHelper<TunnelStatus[]>("/tunnels"), retry: false, refetchInterval: 3_000 });
 
   useEffect(() => { if (!auth.loading && !auth.user) router.replace("/login"); }, [auth.loading, auth.user, router]);
   if (auth.loading || !auth.user || server.isLoading) return <DetailSkeleton />;
   if (server.isError || !server.data) return <DetailError retry={() => server.refetch()} />;
   const item = server.data;
+  const tunnel = tunnels.data?.find((profile) => profile.server_id === serverID || profile.id === serverID);
   const samples = history.data ?? [];
   const chartData = samples.map((sample) => ({ ...sample, time: new Date(sample.collected_at).getTime() }));
 
@@ -48,6 +55,38 @@ export default function ServerPage() {
 	setActionError("");
 	try { await auth.request(`/api/v1/servers/${serverID}`, { method: "DELETE" }); router.replace("/"); }
 	catch (error) { setActionError(error instanceof Error ? error.message : "Server could not be deleted."); }
+  }
+
+  async function configureTunnel() {
+    if (!/^[A-Za-z0-9._-]+$/.test(sshUser) || !/^[A-Za-z0-9.-]+$/.test(sshHost) || !/^\d{1,5}$/.test(sshPort) || Number(sshPort) < 1 || Number(sshPort) > 65535) {
+      setActionError("Enter a valid SSH username, host, and port.");
+      return;
+    }
+    setTunnelBusy(true);
+    setActionError("");
+    try {
+      await localHelper("/tunnels/register", "POST", { id: serverID, server_id: serverID, name: item.name, target: `${sshUser}@${sshHost}`, port: sshPort, remote_port: "18082" });
+      await localHelper("/tunnels/start", "POST", { id: serverID });
+      await tunnels.refetch();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Tunnel could not be configured.");
+    } finally {
+      setTunnelBusy(false);
+    }
+  }
+
+  async function toggleTunnel() {
+    if (!tunnel) return;
+    setTunnelBusy(true);
+    setActionError("");
+    try {
+      await localHelper(tunnel.running ? "/tunnels/stop" : "/tunnels/start", "POST", { id: tunnel.id });
+      await tunnels.refetch();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Tunnel action failed.");
+    } finally {
+      setTunnelBusy(false);
+    }
   }
 
   return <main className="min-h-screen bg-background text-foreground">
@@ -72,6 +111,10 @@ export default function ServerPage() {
       </section>
 
       <section className="grid gap-3 rounded-lg border border-panel-border bg-panel p-4 text-sm sm:grid-cols-2 xl:grid-cols-4"><Info label="Kernel" value={item.kernel_version} /><Info label="Architecture" value={item.architecture} /><Info label="Agent" value={item.agent_version} /><Info label="Last heartbeat" value={item.last_seen_at ? new Date(item.last_seen_at).toLocaleString() : "Never"} /></section>
+      <section className="rounded-lg border border-panel-border bg-panel p-4">
+        <div className="flex flex-wrap items-center justify-between gap-4"><div><div className="flex items-center gap-2"><Cable className="h-4 w-4 text-accent" /><h2 className="text-sm font-semibold">Reverse tunnel</h2></div><p className="mt-1 text-xs text-muted">{tunnels.isError ? "Local helper unavailable. Run make local-helper-install." : tunnel ? `${tunnel.target}:${tunnel.port} · ${tunnel.running ? "Connected" : "Disconnected"}` : "Configure the SSH target once for this existing server."}</p></div>{tunnel && <Button variant="secondary" disabled={tunnelBusy} onClick={toggleTunnel}>{tunnelBusy ? "Working..." : tunnel.running ? "Stop tunnel" : "Start tunnel"}</Button>}</div>
+        {!tunnel && !tunnels.isError && <div className="mt-4 grid gap-3 sm:grid-cols-[160px_minmax(180px,1fr)_110px_auto]"><input className="form-control" value={sshUser} onChange={(event) => setSSHUser(event.target.value)} placeholder="SSH user" aria-label="SSH username" /><input className="form-control" value={sshHost} onChange={(event) => setSSHHost(event.target.value)} placeholder="Server IP or hostname" aria-label="SSH host" /><input className="form-control" type="number" min="1" max="65535" value={sshPort} onChange={(event) => setSSHPort(event.target.value)} aria-label="SSH port" /><Button disabled={tunnelBusy} onClick={configureTunnel}>{tunnelBusy ? "Opening..." : "Save & start"}</Button></div>}
+      </section>
       <section className="flex flex-wrap items-center justify-between gap-4 border-t border-panel-border py-4"><div><h2 className="text-sm font-semibold">Server controls</h2><p className="mt-1 text-xs text-muted">Sensitive changes are workspace-scoped and recorded in the audit log.</p>{actionError && <p className="mt-2 text-xs text-danger" role="alert">{actionError}</p>}</div><div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => setMaintenance(item.status !== "maintenance")}><Wrench className="h-4 w-4" />{item.status === "maintenance" ? "End maintenance" : "Maintenance"}</Button><Button variant="secondary" disabled={item.agent_revoked} onClick={revokeAgent}><Ban className="h-4 w-4" />Revoke agent</Button><Button variant="secondary" className="text-danger" onClick={deleteServer}><Trash2 className="h-4 w-4" />Delete server</Button></div></section>
       <section className="overflow-hidden rounded-lg border border-panel-border bg-panel">
         <div className="flex items-center justify-between border-b border-panel-border px-4 py-3"><div className="flex items-center gap-2"><Bell className="h-4 w-4 text-muted" /><h2 className="text-sm font-semibold">Alert history</h2></div><Link href="/alerts" className="text-xs text-accent hover:underline">Manage rules</Link></div>
