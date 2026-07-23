@@ -7,7 +7,12 @@ include .env
 export
 endif
 
-.PHONY: dev build test lint migrate-up migrate-down seed agent-build agent-install-local api-dev web-dev
+.PHONY: dev build test lint migrate-up migrate-down seed agent-build agent-install-local api-dev web-dev ssh-tunnel local-helper
+
+API_PORT ?= 8080
+REMOTE_API_PORT ?= 18082
+PUBLIC_WEB_URL ?= http://localhost:3000
+LOCAL_HELPER_ADDR ?= 127.0.0.1:9734
 
 dev:
 	docker compose up --build
@@ -17,6 +22,12 @@ api-dev:
 
 web-dev:
 	npm --workspace apps/web run dev
+
+ssh-tunnel:
+	./deployments/scripts/reverse-tunnel-ssh.sh --target "$(SSH_TARGET)" $(if $(SSH_PORT),--port "$(SSH_PORT)") --local-port "$(API_PORT)" --remote-port "$(REMOTE_API_PORT)"
+
+local-helper: agent-build
+	cd apps/api && go run ./cmd/local-helper -repo-root ../.. -origin "$(PUBLIC_WEB_URL)" -addr "$(LOCAL_HELPER_ADDR)" -local-api-port "$(API_PORT)"
 
 build:
 	cd apps/api && go build ./cmd/api
@@ -28,6 +39,7 @@ test:
 	cd agent && go test ./...
 	npm --workspace apps/web run test
 	./deployments/scripts/bootstrap-ssh.test.sh
+	./deployments/scripts/reverse-tunnel-ssh.test.sh
 
 lint:
 	test -z "$$(gofmt -l apps/api)"

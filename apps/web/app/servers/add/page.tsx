@@ -27,11 +27,14 @@ export default function AddServerPage() {
   const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
   const [requestError, setRequestError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [openingTerminal, setOpeningTerminal] = useState(false);
+  const [terminalOpened, setTerminalOpened] = useState(false);
+  const [helperError, setHelperError] = useState("");
   const [method, setMethod] = useState<"ssh" | "manual">("ssh");
   const [sshUser, setSSHUser] = useState("deploy");
   const [sshHost, setSSHHost] = useState("");
   const [sshPort, setSSHPort] = useState("22");
-  const [apiEndpoint, setAPIEndpoint] = useState(process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080");
+  const [apiEndpoint, setAPIEndpoint] = useState("http://127.0.0.1:18082");
   const workspaces = useQuery({ queryKey: ["workspaces"], queryFn: () => auth.request<Workspace[]>("/api/v1/workspaces"), enabled: Boolean(auth.accessToken) });
   const { register, handleSubmit, setError, formState: { errors } } = useForm<Values>({ defaultValues: { environment: "production", tags: "", description: "" } });
   const workspace = workspaces.data?.[0];
@@ -97,10 +100,42 @@ export default function AddServerPage() {
     await createEnrollment();
   }
 
+  async function openInTerminal() {
+    if (!enrollment?.token || !details || method !== "ssh") return;
+    setOpeningTerminal(true);
+    setTerminalOpened(false);
+    setHelperError("");
+    try {
+      const response = await fetch("http://127.0.0.1:9734/bootstrap", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target: `${sshUser}@${sshHost}`,
+          port: sshPort,
+          endpoint: apiEndpoint,
+          token: enrollment.token,
+          server_name: details.name,
+          environment: details.environment,
+        }),
+      });
+      const result = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(result.error || "Local helper rejected the request.");
+      setTerminalOpened(true);
+    } catch (error) {
+      setHelperError(error instanceof Error && !error.message.includes("fetch") ? error.message : "Local helper is not running. Run make local-helper, then try again.");
+    } finally {
+      setOpeningTerminal(false);
+    }
+  }
+
   const command = (() => {
     if (!enrollment?.token) return "";
     const endpoint = method === "ssh" ? apiEndpoint : process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
-    if (method === "ssh") return `./deployments/scripts/bootstrap-ssh.sh --target '${shellQuote(`${sshUser}@${sshHost}`)}' --port '${shellQuote(sshPort)}' --endpoint '${shellQuote(endpoint)}' --token '${shellQuote(enrollment.token)}' --server-name '${shellQuote(details?.name ?? "server")}' --environment '${shellQuote(details?.environment ?? "other")}'`;
+    if (method === "ssh") {
+      const remotePort = loopbackPort(endpoint);
+      const reverse = remotePort ? ` --reverse-local-port '${shellQuote(apiPort(process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080"))}' --reverse-remote-port '${shellQuote(remotePort)}'` : "";
+      return `./deployments/scripts/bootstrap-ssh.sh --target '${shellQuote(`${sshUser}@${sshHost}`)}' --port '${shellQuote(sshPort)}' --endpoint '${shellQuote(endpoint)}'${reverse} --token '${shellQuote(enrollment.token)}' --server-name '${shellQuote(details?.name ?? "server")}' --environment '${shellQuote(details?.environment ?? "other")}'`;
+    }
     const config = [`endpoint: ${endpoint}`, `server_name: ${details?.name ?? "enrolled-server"}`, `environment: ${details?.environment ?? "other"}`, "enrollment_file: /etc/noxwatch/enrollment-token", "credential_file: /etc/noxwatch/credential.json", `allow_insecure_http: ${endpoint.startsWith("http://")}`].join("\\n");
     return `sudo install -d -m 0700 /etc/noxwatch && printf '%s' '${shellQuote(enrollment.token)}' | sudo tee /etc/noxwatch/enrollment-token >/dev/null && printf '%b' '${shellQuote(config)}' | sudo tee /etc/noxwatch/agent.yaml >/dev/null && sudo chmod 0600 /etc/noxwatch/enrollment-token /etc/noxwatch/agent.yaml && sudo noxwatch-agent -config /etc/noxwatch/agent.yaml run`;
   })();
@@ -135,7 +170,7 @@ export default function AddServerPage() {
           <Field label="SSH username"><input className="form-control" value={sshUser} onChange={(event) => setSSHUser(event.target.value)} placeholder="deploy" /></Field>
           <Field label="Server IP or hostname"><input className="form-control" value={sshHost} onChange={(event) => setSSHHost(event.target.value)} placeholder="192.168.1.20" /></Field>
           <Field label="SSH port"><input className="form-control" type="number" min="1" max="65535" value={sshPort} onChange={(event) => setSSHPort(event.target.value)} /></Field>
-          <Field label="Reachable API endpoint"><input className="form-control" type="url" value={apiEndpoint} onChange={(event) => setAPIEndpoint(event.target.value)} placeholder="http://192.168.1.10:8080" /></Field>
+          <Field label="Agent API endpoint" hint="Loopback starts a reverse tunnel automatically"><input className="form-control" type="url" value={apiEndpoint} onChange={(event) => setAPIEndpoint(event.target.value)} placeholder="http://127.0.0.1:18082" /></Field>
         </div>}
         {requestError && <p className="mt-4 text-sm text-danger" role="alert">{requestError}</p>}
         <div className="mt-8 flex justify-between"><Button variant="secondary" onClick={() => setStep(1)}><ChevronLeft className="h-4 w-4" />Back</Button><Button onClick={createEnrollment}>Generate token<ChevronRight className="h-4 w-4" /></Button></div>
@@ -144,8 +179,9 @@ export default function AddServerPage() {
       {activeStep === 3 && enrollment && <section>
         <div className="flex items-start justify-between gap-4"><div><h2 className="text-base font-semibold">Enrollment command</h2><p className="mt-2 text-sm text-muted">Token expires in <Countdown expiresAt={enrollment.expires_at} /> and is invalidated after first use.</p></div><MonitorUp className="h-5 w-5 text-accent" /></div>
         <pre className="mt-6 overflow-x-auto rounded-md border border-panel-border bg-[#050c12] p-4 text-xs leading-6 text-[#b9cad9]"><code>{command}</code></pre>
-        <div className="mt-4 flex flex-wrap gap-3"><Button variant="secondary" onClick={async () => { await navigator.clipboard.writeText(command); setCopied(true); setTimeout(() => setCopied(false), 1500); }}>{copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}{copied ? "Copied" : "Copy command"}</Button><Button variant="secondary" onClick={regenerate}><RefreshCw className="h-4 w-4" />Regenerate</Button></div>
-        <div className="mt-8 border-t border-panel-border pt-6 text-sm text-muted"><p>{method === "ssh" ? "Run from the NoxWatch repository after make agent-build. OpenSSH prompts for the SSH and sudo passwords locally; NoxWatch never receives them." : "Supported: systemd-based x86_64 and arm64 Linux hosts. The agent must already be installed at /usr/local/bin/noxwatch-agent."}</p><p className="mt-2">The command transfers only the short-lived token. Permanent credentials are returned directly to the agent and saved with mode 0600.</p></div>
+        <div className="mt-4 flex flex-wrap gap-3">{method === "ssh" && <Button onClick={openInTerminal} disabled={openingTerminal}><Terminal className="h-4 w-4" />{openingTerminal ? "Opening..." : terminalOpened ? "Terminal opened" : "Open in terminal"}</Button>}<Button variant="secondary" onClick={async () => { await navigator.clipboard.writeText(command); setCopied(true); setTimeout(() => setCopied(false), 1500); }}>{copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}{copied ? "Copied" : "Copy command"}</Button><Button variant="secondary" onClick={regenerate}><RefreshCw className="h-4 w-4" />Regenerate</Button></div>
+        {helperError && <p className="mt-3 text-sm text-danger" role="alert">{helperError}</p>}
+        <div className="mt-8 border-t border-panel-border pt-6 text-sm text-muted"><p>{method === "ssh" ? "Open in terminal uses the local helper; SSH and sudo passwords stay in that terminal. A loopback endpoint keeps its reverse tunnel active in the same terminal." : "Supported: systemd-based x86_64 and arm64 Linux hosts. The agent must already be installed at /usr/local/bin/noxwatch-agent."}</p><p className="mt-2">The command transfers only the short-lived token. Permanent credentials are returned directly to the agent and saved with mode 0600.</p></div>
         <div className="mt-8 flex justify-between"><Button variant="secondary" onClick={() => { void revoke(); router.push("/"); }}>Cancel</Button><Button onClick={() => setStep(4)}>I started the agent<ChevronRight className="h-4 w-4" /></Button></div>
       </section>}
 
@@ -168,3 +204,19 @@ function Countdown({ expiresAt }: { expiresAt: string }) {
   return <span className="font-mono text-foreground">{Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")}</span>;
 }
 function shellQuote(value: string) { return value.replaceAll("'", "'\\''"); }
+function apiPort(endpoint: string) {
+  try {
+    const parsed = new URL(endpoint);
+    return parsed.port || (parsed.protocol === "https:" ? "443" : "80");
+  } catch {
+    return "8080";
+  }
+}
+function loopbackPort(endpoint: string) {
+  try {
+    const parsed = new URL(endpoint);
+    return ["127.0.0.1", "localhost", "[::1]"].includes(parsed.hostname) ? apiPort(endpoint) : "";
+  } catch {
+    return "";
+  }
+}

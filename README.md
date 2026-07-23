@@ -73,6 +73,8 @@ The API does not auto-migrate. Run `make migrate-up` before starting it against 
 make dev                 # Build and run the complete Compose stack
 make api-dev             # Run the Go API on the host
 make web-dev             # Run Next.js on the host
+make ssh-tunnel SSH_TARGET=user@host  # Link a remote agent to the local API
+make local-helper        # Enable Add Server's Open in terminal button
 make migrate-up          # Apply pending migrations
 make migrate-down        # Roll back the latest migration
 make seed                # Idempotent development-only demo data
@@ -96,6 +98,22 @@ make agent-build
 ```
 
 OpenSSH asks for the SSH password in the local terminal; NoxWatch never receives or stores it. Manual binary installation remains available through `deployments/scripts/install-local.sh`.
+
+To launch SSH bootstrap directly from Add Server, keep the local helper running in another terminal:
+
+```bash
+make local-helper
+```
+
+The helper binds only to `127.0.0.1:9734`, accepts requests only from `PUBLIC_WEB_URL`, validates every bootstrap field, and opens the existing bootstrap script in a local terminal. When the Agent API endpoint is loopback (the default `http://127.0.0.1:18082`), the same SSH session creates the reverse tunnel, enrolls the agent, and stays open to keep that tunnel alive. The copyable command remains available when the helper is not running.
+
+For an already-enrolled server outside the local network, reconnect its reverse SSH tunnel with:
+
+```bash
+make ssh-tunnel SSH_TARGET=deploy@203.0.113.10
+```
+
+Then enter `http://127.0.0.1:18082` as the reachable API endpoint during SSH bootstrap. On later starts, run the same tunnel command; the saved agent endpoint does not change. See [docs/agent.md](docs/agent.md#reverse-ssh-tunnel).
 
 The enrollment token is stored only as a SHA-256 hash, expires after 15 minutes, and is returned once. After enrollment, the agent removes the token file and atomically writes its permanent credential with mode `0600`. See [docs/agent.md](docs/agent.md).
 
@@ -156,7 +174,8 @@ Full route ownership and flows are documented in [docs/architecture.md](docs/arc
 - Port already in use: set `API_PORT`, `WEB_PORT`, `POSTGRES_PORT`, or `REDIS_PORT` in `.env`.
 - Browser cannot refresh: ensure its exact origin is in `CORS_ALLOWED_ORIGINS`.
 - Agent rejects HTTP: use HTTPS, or set `allow_insecure_http: true` only for local development.
-- SSH bootstrap cannot connect: verify the SSH target, remote `sudo` access, and use the NoxWatch machine's LAN IP instead of `localhost` for the API endpoint.
+- SSH bootstrap cannot connect: verify the SSH target and remote `sudo` access; use a LAN API address or start the reverse tunnel before using its loopback endpoint.
+- Reverse SSH tunnel cannot bind: confirm remote SSH forwarding is enabled and `REMOTE_API_PORT` is unused.
 - No metrics: run `sudo noxwatch-agent status` and inspect `journalctl -u noxwatch-agent`.
 - Migration path error: run commands through the Makefile or set `MIGRATIONS_DIR` correctly for the process working directory.
 

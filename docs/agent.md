@@ -32,7 +32,29 @@ make agent-build
   --token nox_enroll_example --server-name local-api --environment development
 ```
 
-OpenSSH prompts for the SSH password locally; the password is never sent to or stored by NoxWatch. The remote user must have `sudo`, the host must use systemd, and the locally built binary must match the remote CPU architecture. Do not use `localhost` as the endpoint unless the NoxWatch API runs on the monitored server itself.
+OpenSSH prompts for the SSH password locally; the password is never sent to or stored by NoxWatch. The remote user must have `sudo`, the host must use systemd, and the locally built binary must match the remote CPU architecture. Do not use `localhost` as the endpoint unless the NoxWatch API runs on the monitored server or the reverse tunnel below is active.
+
+### Reverse SSH tunnel
+
+During first enrollment, a loopback Agent API endpoint makes the generated bootstrap command create the reverse tunnel automatically:
+
+```bash
+./deployments/scripts/bootstrap-ssh.sh --target deploy@203.0.113.10 \
+  --endpoint http://127.0.0.1:18082 --reverse-local-port 8082 --reverse-remote-port 18082 \
+  --token nox_enroll_example --server-name local-api --environment development
+```
+
+The command installs and enrolls the agent, then stays open to keep the tunnel alive. `Open in terminal` generates and runs this command through the local helper.
+
+For later sessions, reconnect an already-enrolled server from the laptop:
+
+```bash
+make ssh-tunnel SSH_TARGET=deploy@203.0.113.10
+```
+
+`API_PORT` is loaded from `.env`; override `SSH_PORT` or `REMOTE_API_PORT` on the command line when needed. Keep the command running and use `http://127.0.0.1:18082` as the reachable API endpoint in Add Server. The agent connects to server loopback, and OpenSSH carries that traffic to the laptop API over the encrypted session. The remote port is not exposed publicly.
+
+After the first enrollment, start the same tunnel whenever the local NoxWatch stack runs. The agent retries automatically while the tunnel is unavailable; no new enrollment token or agent configuration is required.
 
 The runtime sends heartbeats every 20 seconds and metrics every 45 seconds by default. Failed metric deliveries use exponential backoff and remain in a bounded in-memory queue of 100 samples; oldest samples are dropped when that ceiling is reached.
 
