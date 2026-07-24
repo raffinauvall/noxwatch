@@ -3,13 +3,14 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Activity, Bell, BookOpen, Boxes, LayoutDashboard, LogOut, Moon, Plug, Sun } from "lucide-react";
+import { Activity, Bell, BookOpen, Boxes, Cable, LayoutDashboard, LogOut, Moon, Plug, Sun } from "lucide-react";
 import { useAuth } from "@/app/providers";
 import { type Workspace } from "@/lib/api";
 
 const navigation = [
   { label: "Overview", href: "/", icon: LayoutDashboard },
   { label: "Servers", href: "/servers", icon: Boxes },
+  { label: "Tunnels", href: "/tunnels", icon: Cable },
   { label: "Alerts", href: "/alerts", icon: Bell },
   { label: "Integrations", href: "/integrations", icon: Plug },
   { label: "Guide", href: "/guide", icon: BookOpen },

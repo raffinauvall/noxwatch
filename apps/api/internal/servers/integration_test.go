@@ -45,6 +45,20 @@ func TestServerLifecycleAndIsolationIntegration(t *testing.T) {
 	}
 
 	service := NewService(db)
+	tunneled, err := service.SaveTunnel(ctx, ownerID, serverID, "deploy", "192.0.2.10", 2326, 18082, "127.0.0.1")
+	if err != nil || tunneled.SSHUser != "deploy" || tunneled.SSHHost != "192.0.2.10" || tunneled.SSHPort == nil || *tunneled.SSHPort != 2326 {
+		t.Fatalf("tunneled=%+v err=%v", tunneled, err)
+	}
+	if _, err := service.SaveTunnel(ctx, outsiderID, serverID, "deploy", "192.0.2.10", 22, 18082, ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("outsider tunnel update returned %v", err)
+	}
+	disconnected, err := service.Disconnect(ctx, ownerID, serverID, "127.0.0.1")
+	if err != nil || disconnected.Status != "offline" {
+		t.Fatalf("disconnected=%+v err=%v", disconnected, err)
+	}
+	if _, err := service.Disconnect(ctx, outsiderID, serverID, ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("outsider disconnect returned %v", err)
+	}
 	name, environment, maintenance := "renamed-api", "production", true
 	tags := []string{"role:api", "region:sg"}
 	updated, err := service.Update(ctx, ownerID, serverID, UpdateInput{Name: &name, Environment: &environment, Maintenance: &maintenance, Tags: &tags}, "127.0.0.1")

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,6 +21,11 @@ type Handler struct {
 	logger  *slog.Logger
 }
 
+var (
+	sshUserPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	sshHostPattern = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
+)
+
 func NewHandler(service *Service, logger *slog.Logger) *Handler {
 	return &Handler{service: service, logger: logger}
 }
@@ -28,8 +34,52 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, require func(http.Handler) 
 	mux.Handle("GET /api/v1/servers", require(http.HandlerFunc(h.list)))
 	mux.Handle("GET /api/v1/servers/{serverId}", require(http.HandlerFunc(h.get)))
 	mux.Handle("PATCH /api/v1/servers/{serverId}", require(http.HandlerFunc(h.update)))
+	mux.Handle("PUT /api/v1/servers/{serverId}/tunnel", require(http.HandlerFunc(h.saveTunnel)))
+	mux.Handle("POST /api/v1/servers/{serverId}/disconnect", require(http.HandlerFunc(h.disconnect)))
 	mux.Handle("DELETE /api/v1/servers/{serverId}", require(http.HandlerFunc(h.delete)))
 	mux.Handle("GET /api/v1/workspaces/{workspaceId}/events", require(http.HandlerFunc(h.events)))
+}
+
+func (h *Handler) saveTunnel(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		SSHUser    string `json:"ssh_user"`
+		SSHHost    string `json:"ssh_host"`
+		SSHPort    int    `json:"ssh_port"`
+		RemotePort int    `json:"remote_port"`
+	}
+	if !httpx.Decode(w, r, &input) {
+		return
+	}
+	input.SSHUser, input.SSHHost = strings.TrimSpace(input.SSHUser), strings.TrimSpace(input.SSHHost)
+	if !sshUserPattern.MatchString(input.SSHUser) || !sshHostPattern.MatchString(input.SSHHost) || input.SSHPort < 1 || input.SSHPort > 65535 || input.RemotePort < 1 || input.RemotePort > 65535 {
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Enter a valid SSH username, host, and ports.", nil)
+		return
+	}
+	claims, _ := auth.Claims(r.Context())
+	server, err := h.service.SaveTunnel(r.Context(), claims.UserID, r.PathValue("serverId"), input.SSHUser, input.SSHHost, input.SSHPort, input.RemotePort, clientIP(r))
+	if errors.Is(err, ErrNotFound) {
+		h.notFound(w, r)
+		return
+	}
+	if err != nil {
+		h.internalError(w, r, err)
+		return
+	}
+	httpx.Write(w, http.StatusOK, server)
+}
+
+func (h *Handler) disconnect(w http.ResponseWriter, r *http.Request) {
+	claims, _ := auth.Claims(r.Context())
+	server, err := h.service.Disconnect(r.Context(), claims.UserID, r.PathValue("serverId"), clientIP(r))
+	if errors.Is(err, ErrNotFound) {
+		h.notFound(w, r)
+		return
+	}
+	if err != nil {
+		h.internalError(w, r, err)
+		return
+	}
+	httpx.Write(w, http.StatusOK, server)
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {

@@ -53,6 +53,17 @@ func TestPrometheusMetrics(t *testing.T) {
 	}
 }
 
+func TestCORSAllowsPut(t *testing.T) {
+	srv := New(testConfig(), slog.Default(), nil, func(context.Context) error { return nil })
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/servers/example/tunnel", nil)
+	req.Header.Set("Origin", "http://localhost:3000")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || !strings.Contains(rec.Header().Get("Access-Control-Allow-Methods"), "PUT") {
+		t.Fatalf("unexpected CORS response: %d %q", rec.Code, rec.Header().Get("Access-Control-Allow-Methods"))
+	}
+}
+
 func testConfig() config.Config {
 	return config.Config{
 		HTTPAddr:           ":0",

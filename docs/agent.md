@@ -44,7 +44,7 @@ During first enrollment, a loopback Agent API endpoint makes the generated boots
   --token nox_enroll_example --server-name local-api --environment development
 ```
 
-With the local helper, the command installs and enrolls the agent, leaves the tunnel running in the background, and closes the terminal after success. Failed commands remain visible in the terminal. The helper stores only the validated SSH target and ports in `~/.config/noxwatch/tunnels.json`; it never stores SSH passwords.
+With the local helper, the command installs and enrolls the agent, leaves the tunnel running in the background, and closes the terminal after success. Failed commands remain visible in the terminal. PostgreSQL is the source of truth for the validated SSH target and ports; `~/.config/noxwatch/tunnels.json` is only the local runtime cache rebuilt by the dashboard. NoxWatch never stores SSH passwords.
 
 For later sessions, reconnect an already-enrolled server from the laptop:
 

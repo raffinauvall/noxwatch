@@ -92,13 +92,14 @@ func TestStartAllLaunchesConfiguredProfiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	launched := false
-	handler := helper{origin: "http://localhost:3002", store: store, launchTunnels: func() error { launched = true; return nil }}
-	request := httptest.NewRequest(http.MethodPost, "/tunnels/start-all", nil)
+	var ids []string
+	handler := helper{origin: "http://localhost:3002", store: store, launchTunnels: func(selected []string) error { launched = true; ids = selected; return nil }}
+	request := httptest.NewRequest(http.MethodPost, "/tunnels/start-all", bytes.NewBufferString(`{"ids":["12345678-abcd"]}`))
 	request.Header.Set("Origin", "http://localhost:3002")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusAccepted || !launched {
-		t.Fatalf("status = %d, launched = %v", response.Code, launched)
+	if response.Code != http.StatusAccepted || !launched || len(ids) != 1 || ids[0] != "12345678-abcd" {
+		t.Fatalf("status = %d, launched = %v, ids = %v", response.Code, launched, ids)
 	}
 }
 
@@ -127,5 +128,25 @@ func TestRegisterAndStartExistingServerTunnel(t *testing.T) {
 	handler.ServeHTTP(startResponse, start)
 	if startResponse.Code != http.StatusAccepted || launched != "profile-1234" {
 		t.Fatalf("start status = %d, launched = %q", startResponse.Code, launched)
+	}
+}
+
+func TestOpenTerminalUsesRegisteredProfile(t *testing.T) {
+	store, err := newTunnelStore(t.TempDir() + "/tunnels.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := tunnelProfile{ID: "profile-1234", ServerID: "server-12345", Name: "api", Target: "deploy@192.0.2.10", Port: "22", LocalPort: "8082", RemotePort: "18082"}
+	if err := store.save(profile); err != nil {
+		t.Fatal(err)
+	}
+	var launched tunnelProfile
+	handler := helper{origin: "http://localhost:3002", store: store, launchShell: func(profile tunnelProfile, _ string) error { launched = profile; return nil }}
+	request := httptest.NewRequest(http.MethodPost, "/terminal", bytes.NewBufferString(`{"id":"server-12345"}`))
+	request.Header.Set("Origin", "http://localhost:3002")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted || launched.Target != profile.Target {
+		t.Fatalf("status = %d, launched = %+v", response.Code, launched)
 	}
 }

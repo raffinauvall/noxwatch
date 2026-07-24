@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, AlertTriangle, ArrowLeft, Ban, Bell, Cable, Cpu, Database, HardDrive, MemoryStick, Network, RotateCcw, Trash2, Wrench } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeft, Ban, Bell, Cable, Cpu, Database, HardDrive, MemoryStick, Network, RotateCcw, Terminal, Trash2, Wrench } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useAuth } from "@/app/providers";
 import { type AlertEvent, type MetricSample, type MetricSnapshot, type ServerRecord } from "@/lib/api";
@@ -35,6 +35,8 @@ export default function ServerPage() {
   if (server.isError || !server.data) return <DetailError retry={() => server.refetch()} />;
   const item = server.data;
   const tunnel = tunnels.data?.find((profile) => profile.server_id === serverID || profile.id === serverID);
+  const tunnelConfigured = Boolean(tunnel || (item.ssh_user && item.ssh_host && item.ssh_port && item.tunnel_remote_port));
+  const tunnelTarget = tunnel?.target ?? (item.ssh_user && item.ssh_host ? `${item.ssh_user}@${item.ssh_host}` : "");
   const samples = history.data ?? [];
   const chartData = samples.map((sample) => ({ ...sample, time: new Date(sample.collected_at).getTime() }));
 
@@ -65,8 +67,10 @@ export default function ServerPage() {
     setTunnelBusy(true);
     setActionError("");
     try {
+      await auth.request(`/api/v1/servers/${serverID}/tunnel`, { method: "PUT", body: JSON.stringify({ ssh_user: sshUser, ssh_host: sshHost, ssh_port: Number(sshPort), remote_port: 18082 }) });
       await localHelper("/tunnels/register", "POST", { id: serverID, server_id: serverID, name: item.name, target: `${sshUser}@${sshHost}`, port: sshPort, remote_port: "18082" });
       await localHelper("/tunnels/start", "POST", { id: serverID });
+      await server.refetch();
       await tunnels.refetch();
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Tunnel could not be configured.");
@@ -76,14 +80,36 @@ export default function ServerPage() {
   }
 
   async function toggleTunnel() {
-    if (!tunnel) return;
+    if (!tunnelConfigured) return;
+    const stopping = Boolean(tunnel?.running);
     setTunnelBusy(true);
     setActionError("");
     try {
-      await localHelper(tunnel.running ? "/tunnels/stop" : "/tunnels/start", "POST", { id: tunnel.id });
+      if (!tunnel) {
+        await localHelper("/tunnels/register", "POST", { id: serverID, server_id: serverID, name: item.name, target: tunnelTarget, port: String(item.ssh_port), remote_port: String(item.tunnel_remote_port) });
+      }
+      await localHelper(stopping ? "/tunnels/stop" : "/tunnels/start", "POST", { id: tunnel?.id ?? serverID });
+      if (stopping) await auth.request(`/api/v1/servers/${serverID}/disconnect`, { method: "POST" });
+      await server.refetch();
       await tunnels.refetch();
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Tunnel action failed.");
+    } finally {
+      setTunnelBusy(false);
+    }
+  }
+
+  async function openTerminal() {
+    if (!tunnelConfigured) return;
+    setTunnelBusy(true);
+    setActionError("");
+    try {
+      if (!tunnel) {
+        await localHelper("/tunnels/register", "POST", { id: serverID, server_id: serverID, name: item.name, target: tunnelTarget, port: String(item.ssh_port), remote_port: String(item.tunnel_remote_port) });
+      }
+      await localHelper("/terminal", "POST", { id: tunnel?.id ?? serverID });
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "SSH terminal could not be opened.");
     } finally {
       setTunnelBusy(false);
     }
@@ -112,8 +138,8 @@ export default function ServerPage() {
 
       <section className="grid gap-3 rounded-lg border border-panel-border bg-panel p-4 text-sm sm:grid-cols-2 xl:grid-cols-4"><Info label="Kernel" value={item.kernel_version} /><Info label="Architecture" value={item.architecture} /><Info label="Agent" value={item.agent_version} /><Info label="Last heartbeat" value={item.last_seen_at ? new Date(item.last_seen_at).toLocaleString() : "Never"} /></section>
       <section className="rounded-lg border border-panel-border bg-panel p-4">
-        <div className="flex flex-wrap items-center justify-between gap-4"><div><div className="flex items-center gap-2"><Cable className="h-4 w-4 text-accent" /><h2 className="text-sm font-semibold">Reverse tunnel</h2></div><p className="mt-1 text-xs text-muted">{tunnels.isError ? "Local helper unavailable. Run make local-helper-install." : tunnel ? `${tunnel.target}:${tunnel.port} · ${tunnel.running ? "Connected" : "Disconnected"}` : "Configure the SSH target once for this existing server."}</p></div>{tunnel && <Button variant="secondary" disabled={tunnelBusy} onClick={toggleTunnel}>{tunnelBusy ? "Working..." : tunnel.running ? "Stop tunnel" : "Start tunnel"}</Button>}</div>
-        {!tunnel && !tunnels.isError && <div className="mt-4 grid gap-3 sm:grid-cols-[160px_minmax(180px,1fr)_110px_auto]"><input className="form-control" value={sshUser} onChange={(event) => setSSHUser(event.target.value)} placeholder="SSH user" aria-label="SSH username" /><input className="form-control" value={sshHost} onChange={(event) => setSSHHost(event.target.value)} placeholder="Server IP or hostname" aria-label="SSH host" /><input className="form-control" type="number" min="1" max="65535" value={sshPort} onChange={(event) => setSSHPort(event.target.value)} aria-label="SSH port" /><Button disabled={tunnelBusy} onClick={configureTunnel}>{tunnelBusy ? "Opening..." : "Save & start"}</Button></div>}
+        <div className="flex flex-wrap items-center justify-between gap-4"><div><div className="flex items-center gap-2"><Cable className="h-4 w-4 text-accent" /><h2 className="text-sm font-semibold">Reverse tunnel</h2></div><p className="mt-1 text-xs text-muted">{tunnels.isError ? "Local helper unavailable; click to retry after it starts." : tunnelConfigured ? `${tunnelTarget}:${tunnel?.port ?? item.ssh_port} · ${tunnel?.running ? "Connected" : "Disconnected"}` : "Configure the SSH target once for this existing server."}</p></div>{tunnelConfigured && <div className="flex gap-2"><Button variant="secondary" disabled={tunnelBusy} onClick={openTerminal}><Terminal className="h-4 w-4" />Open terminal</Button><Button variant="secondary" disabled={tunnelBusy} onClick={toggleTunnel}>{tunnelBusy ? "Working..." : tunnel?.running ? "Stop tunnel" : "Start tunnel"}</Button></div>}</div>
+        {!tunnelConfigured && <div className="mt-4 grid gap-3 sm:grid-cols-[160px_minmax(180px,1fr)_110px_auto]"><input className="form-control" value={sshUser} onChange={(event) => setSSHUser(event.target.value)} placeholder="SSH user" aria-label="SSH username" /><input className="form-control" value={sshHost} onChange={(event) => setSSHHost(event.target.value)} placeholder="Server IP or hostname" aria-label="SSH host" /><input className="form-control" type="number" min="1" max="65535" value={sshPort} onChange={(event) => setSSHPort(event.target.value)} aria-label="SSH port" /><Button disabled={tunnelBusy} onClick={configureTunnel}>{tunnelBusy ? "Opening..." : "Save & start"}</Button></div>}
       </section>
       <section className="flex flex-wrap items-center justify-between gap-4 border-t border-panel-border py-4"><div><h2 className="text-sm font-semibold">Server controls</h2><p className="mt-1 text-xs text-muted">Sensitive changes are workspace-scoped and recorded in the audit log.</p>{actionError && <p className="mt-2 text-xs text-danger" role="alert">{actionError}</p>}</div><div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => setMaintenance(item.status !== "maintenance")}><Wrench className="h-4 w-4" />{item.status === "maintenance" ? "End maintenance" : "Maintenance"}</Button><Button variant="secondary" disabled={item.agent_revoked} onClick={revokeAgent}><Ban className="h-4 w-4" />Revoke agent</Button><Button variant="secondary" className="text-danger" onClick={deleteServer}><Trash2 className="h-4 w-4" />Delete server</Button></div></section>
       <section className="overflow-hidden rounded-lg border border-panel-border bg-panel">

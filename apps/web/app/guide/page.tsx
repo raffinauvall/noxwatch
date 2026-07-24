@@ -60,7 +60,7 @@ docker compose up -d --build`}</Command></div>
           <Command>{`docker compose up -d
 # Open the dashboard, then click:
 # Start all tunnels`}</Command>
-          <p className="mt-4 text-sm leading-6 text-muted">One Kitty window prompts for servers that need password authentication. Successful tunnels continue in background; the button updates every three seconds and becomes <strong className="text-foreground">Stop all</strong> when every profile is connected.</p>
+          <p className="mt-4 text-sm leading-6 text-muted">Use the <Link className="text-accent hover:underline" href="/tunnels">Tunnels page</Link> to start, stop, and inspect every connection or open a server in Kitty. Successful tunnels continue in background and update every three seconds. Stopping a managed tunnel marks its server offline immediately; a valid agent heartbeat brings it online again.</p>
         </GuideSection>
 
         <GuideSection id="diagnostics" icon={<LifeBuoy />} title="Diagnostics" intro="Run these checks in order when a server stays offline.">
@@ -77,7 +77,8 @@ sudo journalctl -u noxwatch-agent -n 50 --no-pager`}</Command>
         <GuideSection id="security" icon={<LockKeyhole />} title="Security model" intro="Tunnel automation does not weaken the existing SSH boundary.">
           <ul className="grid gap-3 text-sm text-muted">
             <Bullet>SSH and sudo passwords are entered only in the local terminal and are never stored by NoxWatch.</Bullet>
-            <Bullet>Local profiles contain only server names, SSH targets, and ports in <code>~/.config/noxwatch/tunnels.json</code>.</Bullet>
+            <Bullet>PostgreSQL stores each server&apos;s SSH target and ports; <code>~/.config/noxwatch/tunnels.json</code> is only a rebuildable runtime cache.</Bullet>
+            <Bullet><strong>Open terminal</strong> launches the local OpenSSH client in Kitty; NoxWatch does not expose a browser shell.</Bullet>
             <Bullet>The helper binds to <code>127.0.0.1:9734</code> and accepts only the configured dashboard origin.</Bullet>
             <Bullet>The reverse port binds to remote loopback, not the server&apos;s public interface.</Bullet>
           </ul>

@@ -7,6 +7,7 @@ export type ServerRecord = {
   status: "online" | "degraded" | "warning" | "offline" | "unknown" | "maintenance";
   last_seen_at: string | null; enrolled_at: string | null; tags: string[]; agent_revoked: boolean;
   cpu_usage_percent: number | null; memory_usage_percent: number | null; disk_usage_percent: number | null; uptime_seconds: number | null;
+  ssh_user?: string; ssh_host?: string; ssh_port?: number; tunnel_remote_port?: number;
 };
 export type MetricSample = {
   collected_at: string; uptime_seconds: number; process_count: number; cpu_usage_percent: number;

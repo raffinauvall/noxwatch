@@ -60,18 +60,21 @@ export default function AddServerPage() {
     const remotePort = loopbackPort(apiEndpoint);
     if (!serverID || !enrollment?.id || method !== "ssh" || !remotePort || registeredTunnel.current === serverID) return;
     registeredTunnel.current = serverID;
-    void localHelper("/tunnels/register", "POST", {
-      id: enrollment.id,
-      server_id: serverID,
-      name: details?.name ?? "server",
-      target: `${sshUser}@${sshHost}`,
-      port: sshPort,
-      remote_port: remotePort,
-    }).catch((error) => {
+    void (async () => {
+      await auth.request(`/api/v1/servers/${serverID}/tunnel`, { method: "PUT", body: JSON.stringify({ ssh_user: sshUser, ssh_host: sshHost, ssh_port: Number(sshPort), remote_port: Number(remotePort) }) });
+      await localHelper("/tunnels/register", "POST", {
+        id: enrollment.id,
+        server_id: serverID,
+        name: details?.name ?? "server",
+        target: `${sshUser}@${sshHost}`,
+        port: sshPort,
+        remote_port: remotePort,
+      });
+    })().catch((error) => {
       registeredTunnel.current = "";
       setHelperError(error instanceof Error ? error.message : "Tunnel profile could not be saved.");
     });
-  }, [apiEndpoint, details?.name, enrollment?.id, method, sshHost, sshPort, sshUser, status.data?.server_id]);
+  }, [apiEndpoint, auth, details?.name, enrollment?.id, method, sshHost, sshPort, sshUser, status.data?.server_id]);
 
   const submitInfo = handleSubmit((values) => {
     const parsed = schema.safeParse(values);

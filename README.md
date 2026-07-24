@@ -108,7 +108,7 @@ To launch SSH bootstrap directly from Add Server, keep the local helper running 
 make local-helper
 ```
 
-The helper binds only to `127.0.0.1:9734`, accepts requests only from `PUBLIC_WEB_URL`, validates every bootstrap field, and opens the existing bootstrap script in a local terminal. When the Agent API endpoint is loopback (the default `http://127.0.0.1:18082`), the SSH tunnel moves to the background after enrollment and the terminal closes automatically. The dashboard can then start or stop all saved tunnels. Profiles contain only the SSH target and ports; passwords remain terminal-only and are never stored.
+The helper binds only to `127.0.0.1:9734`, accepts requests only from `PUBLIC_WEB_URL`, validates every bootstrap field, and opens the existing bootstrap script in a local terminal. When the Agent API endpoint is loopback (the default `http://127.0.0.1:18082`), the SSH tunnel moves to the background after enrollment and the terminal closes automatically. The dashboard can then start or stop all saved tunnels. PostgreSQL stores the workspace-scoped SSH target and ports; the helper rebuilds its local runtime cache from that data. Passwords remain terminal-only and are never stored.
 
 For the dashboard controls to work after a laptop restart, install the helper as a user service once:
 
@@ -116,7 +116,7 @@ For the dashboard controls to work after a laptop restart, install the helper as
 make local-helper-install
 ```
 
-It starts after desktop login. **Start all tunnels** opens one terminal, prompts only where OpenSSH needs authentication, starts each tunnel in the background, and closes after success.
+It starts after desktop login. **Start all tunnels** opens one terminal, prompts only where OpenSSH needs authentication, starts each tunnel in the background, and closes after success. Each configured server also has **Open terminal**, which opens its SSH session in the local terminal and reuses the managed connection when available.
 
 For an already-enrolled server outside the local network, reconnect its reverse SSH tunnel with:
 

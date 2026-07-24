@@ -51,6 +51,10 @@ type Server struct {
 	MemoryUsagePercent *float64   `json:"memory_usage_percent"`
 	DiskUsagePercent   *float64   `json:"disk_usage_percent"`
 	UptimeSeconds      *int64     `json:"uptime_seconds"`
+	SSHUser            string     `json:"ssh_user,omitempty"`
+	SSHHost            string     `json:"ssh_host,omitempty"`
+	SSHPort            *int       `json:"ssh_port,omitempty"`
+	TunnelRemotePort   *int       `json:"tunnel_remote_port,omitempty"`
 }
 
 type Service struct{ db *pgxpool.Pool }
@@ -60,8 +64,10 @@ func NewService(db *pgxpool.Pool) *Service { return &Service{db: db} }
 func (s *Service) List(ctx context.Context, userID, workspaceID string, options ListOptions) ([]Server, error) {
 	rows, err := s.db.Query(ctx, `SELECT s.id,s.workspace_id,s.name,s.hostname,s.description,s.environment,s.operating_system,s.os_version,s.kernel_version,s.architecture,s.agent_version,
 	  CASE WHEN s.status IN ('maintenance','unknown') THEN s.status WHEN s.last_seen_at IS NULL OR s.last_seen_at < now()-interval '2 minutes' THEN 'offline' ELSE s.status END,s.last_seen_at,s.enrolled_at,
-	  COALESCE((SELECT array_agg(tag ORDER BY tag) FROM server_tags WHERE server_id=s.id),'{}'),a.revoked_at IS NOT NULL,latest.cpu_usage_percent,latest.memory_usage_percent,latest.disk_usage_percent,latest.uptime_seconds
+	  COALESCE((SELECT array_agg(tag ORDER BY tag) FROM server_tags WHERE server_id=s.id),'{}'),a.revoked_at IS NOT NULL,latest.cpu_usage_percent,latest.memory_usage_percent,latest.disk_usage_percent,latest.uptime_seconds,
+	  COALESCE(tp.ssh_user,''),COALESCE(tp.ssh_host,''),tp.ssh_port,tp.remote_port
 	  FROM servers s JOIN workspace_members wm ON wm.workspace_id=s.workspace_id AND wm.user_id=$1 JOIN agents a ON a.server_id=s.id
+	  LEFT JOIN server_tunnel_profiles tp ON tp.server_id=s.id
 	  LEFT JOIN LATERAL (SELECT ms.cpu_usage_percent,ms.memory_usage_percent,ms.uptime_seconds,(SELECT max(d.usage_percent) FROM disk_metric_samples d WHERE d.metric_sample_id=ms.id) disk_usage_percent FROM metric_samples ms WHERE ms.server_id=s.id ORDER BY ms.collected_at DESC LIMIT 1) latest ON true
 	  WHERE s.workspace_id=$2
 	    AND ($5='' OR s.name ILIKE '%'||$5||'%' OR s.hostname ILIKE '%'||$5||'%')
@@ -86,8 +92,10 @@ func (s *Service) List(ctx context.Context, userID, workspaceID string, options 
 func (s *Service) Get(ctx context.Context, userID, serverID string) (Server, error) {
 	row := s.db.QueryRow(ctx, `SELECT s.id,s.workspace_id,s.name,s.hostname,s.description,s.environment,s.operating_system,s.os_version,s.kernel_version,s.architecture,s.agent_version,
 	  CASE WHEN s.status IN ('maintenance','unknown') THEN s.status WHEN s.last_seen_at IS NULL OR s.last_seen_at < now()-interval '2 minutes' THEN 'offline' ELSE s.status END,s.last_seen_at,s.enrolled_at,
-	  COALESCE((SELECT array_agg(tag ORDER BY tag) FROM server_tags WHERE server_id=s.id),'{}'),a.revoked_at IS NOT NULL,latest.cpu_usage_percent,latest.memory_usage_percent,latest.disk_usage_percent,latest.uptime_seconds
+	  COALESCE((SELECT array_agg(tag ORDER BY tag) FROM server_tags WHERE server_id=s.id),'{}'),a.revoked_at IS NOT NULL,latest.cpu_usage_percent,latest.memory_usage_percent,latest.disk_usage_percent,latest.uptime_seconds,
+	  COALESCE(tp.ssh_user,''),COALESCE(tp.ssh_host,''),tp.ssh_port,tp.remote_port
 	  FROM servers s JOIN workspace_members wm ON wm.workspace_id=s.workspace_id AND wm.user_id=$1 JOIN agents a ON a.server_id=s.id
+	  LEFT JOIN server_tunnel_profiles tp ON tp.server_id=s.id
 	  LEFT JOIN LATERAL (SELECT ms.cpu_usage_percent,ms.memory_usage_percent,ms.uptime_seconds,(SELECT max(d.usage_percent) FROM disk_metric_samples d WHERE d.metric_sample_id=ms.id) disk_usage_percent FROM metric_samples ms WHERE ms.server_id=s.id ORDER BY ms.collected_at DESC LIMIT 1) latest ON true
 	  WHERE s.id=$2`, userID, serverID)
 	server, err := scan(row)
@@ -151,6 +159,58 @@ func (s *Service) Delete(ctx context.Context, userID, serverID, ip string) error
 	return tx.Commit(ctx)
 }
 
+func (s *Service) Disconnect(ctx context.Context, userID, serverID, ip string) (Server, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return Server{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	var workspaceID string
+	err = tx.QueryRow(ctx, `UPDATE servers s SET status='offline',updated_at=now()
+	  FROM workspace_members wm WHERE s.id=$1 AND wm.workspace_id=s.workspace_id AND wm.user_id=$2 AND wm.role IN ('owner','admin') RETURNING s.workspace_id`, serverID, userID).Scan(&workspaceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Server{}, ErrNotFound
+	}
+	if err != nil {
+		return Server{}, err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO audit_logs (workspace_id,actor_user_id,action,target_type,target_id,ip_address) VALUES ($1,$2,'server.disconnect','server',$3,NULLIF($4,'')::inet)`, workspaceID, userID, serverID, ip); err != nil {
+		return Server{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Server{}, err
+	}
+	return s.Get(ctx, userID, serverID)
+}
+
+func (s *Service) SaveTunnel(ctx context.Context, userID, serverID, sshUser, sshHost string, sshPort, remotePort int, ip string) (Server, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return Server{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	var workspaceID string
+	err = tx.QueryRow(ctx, `SELECT s.workspace_id FROM servers s JOIN workspace_members wm ON wm.workspace_id=s.workspace_id AND wm.user_id=$2 AND wm.role IN ('owner','admin') WHERE s.id=$1`, serverID, userID).Scan(&workspaceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Server{}, ErrNotFound
+	}
+	if err != nil {
+		return Server{}, err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO server_tunnel_profiles (server_id,ssh_user,ssh_host,ssh_port,remote_port) VALUES ($1,$2,$3,$4,$5)
+	  ON CONFLICT (server_id) DO UPDATE SET ssh_user=EXCLUDED.ssh_user,ssh_host=EXCLUDED.ssh_host,ssh_port=EXCLUDED.ssh_port,remote_port=EXCLUDED.remote_port,updated_at=now()`,
+		serverID, sshUser, sshHost, sshPort, remotePort); err != nil {
+		return Server{}, err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO audit_logs (workspace_id,actor_user_id,action,target_type,target_id,ip_address) VALUES ($1,$2,'server.tunnel.update','server',$3,NULLIF($4,'')::inet)`, workspaceID, userID, serverID, ip); err != nil {
+		return Server{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Server{}, err
+	}
+	return s.Get(ctx, userID, serverID)
+}
+
 func (s *Service) Statuses(ctx context.Context, userID, workspaceID string) ([]Status, error) {
 	rows, err := s.db.Query(ctx, `SELECT s.id,CASE WHEN s.status IN ('maintenance','unknown') THEN s.status WHEN s.last_seen_at IS NULL OR s.last_seen_at < now()-interval '2 minutes' THEN 'offline' ELSE s.status END,s.last_seen_at FROM servers s JOIN workspace_members wm ON wm.workspace_id=s.workspace_id AND wm.user_id=$1 WHERE s.workspace_id=$2 ORDER BY s.id`, userID, workspaceID)
 	if err != nil {
@@ -174,6 +234,7 @@ func scan(row scanner) (Server, error) {
 	var server Server
 	err := row.Scan(&server.ID, &server.WorkspaceID, &server.Name, &server.Hostname, &server.Description, &server.Environment,
 		&server.OperatingSystem, &server.OSVersion, &server.KernelVersion, &server.Architecture, &server.AgentVersion, &server.Status,
-		&server.LastSeenAt, &server.EnrolledAt, &server.Tags, &server.AgentRevoked, &server.CPUUsagePercent, &server.MemoryUsagePercent, &server.DiskUsagePercent, &server.UptimeSeconds)
+		&server.LastSeenAt, &server.EnrolledAt, &server.Tags, &server.AgentRevoked, &server.CPUUsagePercent, &server.MemoryUsagePercent, &server.DiskUsagePercent, &server.UptimeSeconds,
+		&server.SSHUser, &server.SSHHost, &server.SSHPort, &server.TunnelRemotePort)
 	return server, err
 }

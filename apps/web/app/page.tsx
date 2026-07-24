@@ -4,14 +4,14 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowUpRight, Bell, Cable, Plus, RotateCcw, Server, ShieldCheck, Square } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Bell, Cable, Plus, RotateCcw, Server, ShieldCheck, Square, Terminal } from "lucide-react";
 import { useAuth } from "@/app/providers";
 import { type AlertEvent, type ServerRecord, type Workspace } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/status-pill";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { parseSSE } from "@/lib/sse.mjs";
-import { localHelper, type TunnelStatus } from "@/lib/local-helper";
+import { localHelper, syncTunnelProfile, type TunnelStatus } from "@/lib/local-helper";
 
 export default function Home() {
   const router = useRouter();
@@ -19,6 +19,7 @@ export default function Home() {
 	const queryClient = useQueryClient();
   const [tunnelAction, setTunnelAction] = useState(false);
   const [tunnelError, setTunnelError] = useState("");
+  const [terminalServerID, setTerminalServerID] = useState("");
   const workspaces = useQuery({
     queryKey: ["workspaces"],
     queryFn: () => auth.request<Workspace[]>("/api/v1/workspaces"),
@@ -27,7 +28,7 @@ export default function Home() {
   const workspace = workspaces.data?.[0];
   const servers = useQuery({
     queryKey: ["servers", workspace?.id],
-    queryFn: () => auth.request<ServerRecord[]>(`/api/v1/servers?workspace_id=${workspace?.id}`),
+    queryFn: () => auth.request<ServerRecord[]>(`/api/v1/servers?workspace_id=${workspace?.id}&limit=100`),
     enabled: Boolean(auth.accessToken && workspace?.id),
     refetchInterval: 20_000,
   });
@@ -78,15 +79,44 @@ export default function Home() {
   const serverRows = servers.data ?? [];
   const incidents = alerts.data ?? [];
   const activeAlerts = alerts.isError ? "—" : incidents.filter((event) => event.state === "firing" || event.state === "pending").length;
-  const tunnelRows = tunnels.data ?? [];
+  const tunnelRows = (tunnels.data ?? []).filter((profile) => serverRows.some((server) => profile.server_id === server.id || profile.id === server.id));
   const runningTunnels = tunnelRows.filter((tunnel) => tunnel.running).length;
   const allTunnelsRunning = tunnelRows.length > 0 && runningTunnels === tunnelRows.length;
+
+  async function openServerTerminal(server: ServerRecord) {
+    setTerminalServerID(server.id);
+    setTunnelError("");
+    try {
+      const id = await syncTunnelProfile(server, tunnelRows, auth.request);
+      if (!id) throw new Error("Configure this server's SSH tunnel first.");
+      await localHelper("/terminal", "POST", { id });
+    } catch (error) {
+      setTunnelError(error instanceof Error ? error.message : "SSH terminal could not be opened.");
+    } finally {
+      setTerminalServerID("");
+    }
+  }
 
   async function toggleTunnels() {
     setTunnelAction(true);
     setTunnelError("");
     try {
-      await localHelper(allTunnelsRunning ? "/tunnels/stop-all" : "/tunnels/start-all", "POST");
+      const ids: string[] = [];
+      if (!allTunnelsRunning) {
+        for (const server of serverRows) {
+          const id = await syncTunnelProfile(server, tunnelRows, auth.request);
+          if (id) ids.push(id);
+        }
+      } else {
+        ids.push(...tunnelRows.map((tunnel) => tunnel.id));
+      }
+      await localHelper(allTunnelsRunning ? "/tunnels/stop-all" : "/tunnels/start-all", "POST", { ids });
+      if (allTunnelsRunning) {
+        for (const tunnel of tunnelRows) {
+          if (tunnel.server_id) await auth.request(`/api/v1/servers/${tunnel.server_id}/disconnect`, { method: "POST" });
+        }
+      }
+      await servers.refetch();
       await tunnels.refetch();
     } catch (error) {
       setTunnelError(error instanceof Error ? error.message : "Tunnel action failed.");
@@ -105,7 +135,7 @@ export default function Home() {
     ["Average disk", average(serverRows.map((server) => server.disk_usage_percent))],
   ] as const;
   return (
-    <DashboardShell workspace={currentWorkspace} title="Overview" action={<div className="flex gap-2"><Button variant="secondary" disabled={tunnels.isError || tunnelRows.length === 0 || tunnelAction} title={tunnels.isError ? "Run make local-helper first" : `${runningTunnels}/${tunnelRows.length} tunnels connected`} onClick={toggleTunnels}>{allTunnelsRunning ? <Square className="h-4 w-4" /> : <Cable className="h-4 w-4" />}{tunnelAction ? "Working..." : allTunnelsRunning ? `Stop all (${runningTunnels})` : `Start all tunnels (${runningTunnels}/${tunnelRows.length})`}</Button><Button onClick={() => router.push("/servers/add")}><Plus className="h-4 w-4" />Add Server</Button></div>}>
+    <DashboardShell workspace={currentWorkspace} title="Overview" action={<div className="flex gap-2"><Button variant="secondary" disabled={tunnelAction} title={tunnels.isError ? "Retry local tunnel helper" : `${runningTunnels}/${tunnelRows.length} tunnels connected`} onClick={toggleTunnels}>{allTunnelsRunning ? <Square className="h-4 w-4" /> : <Cable className="h-4 w-4" />}{tunnelAction ? "Working..." : allTunnelsRunning ? `Stop all (${runningTunnels})` : `Start all tunnels (${runningTunnels}/${tunnelRows.length})`}</Button><Button onClick={() => router.push("/servers/add")}><Plus className="h-4 w-4" />Add Server</Button></div>}>
         <div className="mx-auto grid max-w-7xl gap-5 px-5 py-6">
           {tunnelError && <section className="border-l-2 border-danger bg-danger/5 px-4 py-3 text-sm" role="alert">{tunnelError}</section>}
           <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -127,9 +157,9 @@ export default function Home() {
             </div>
           </section> : <section id="servers">
             <div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-semibold">Servers</h2><Link href="/servers" className="flex items-center gap-1 text-xs text-muted hover:text-accent">View all<ArrowUpRight className="h-3.5 w-3.5" /></Link></div>
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{serverRows.map((server) => <Link key={server.id} href={`/servers/${server.id}`} className="group rounded-lg border border-panel-border bg-panel p-4 transition hover:border-accent/40 hover:bg-panel/80">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{serverRows.map((server) => <article key={server.id} className="group rounded-lg border border-panel-border bg-panel p-4 transition hover:border-accent/40 hover:bg-panel/80">
               <div className="flex min-w-0 items-start justify-between gap-4">
-                <div className="flex min-w-0 gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-panel-border bg-background"><Server className="h-4 w-4 text-muted" /></span><div className="min-w-0"><h3 className="truncate text-sm font-semibold group-hover:text-accent">{server.name}</h3><p className="mt-1 truncate text-xs text-muted">{server.hostname || "Awaiting identity"} · {server.environment}</p></div></div>
+                <Link href={`/servers/${server.id}`} className="flex min-w-0 gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-panel-border bg-background"><Server className="h-4 w-4 text-muted" /></span><div className="min-w-0"><h3 className="truncate text-sm font-semibold group-hover:text-accent">{server.name}</h3><p className="mt-1 truncate text-xs text-muted">{server.hostname || "Awaiting identity"} · {server.environment}</p></div></Link>
                 <StatusPill status={server.status} />
               </div>
               <div className="mt-5 grid grid-cols-3 gap-4">
@@ -138,7 +168,8 @@ export default function Home() {
                 <ResourceMetric label="Disk" value={server.disk_usage_percent} />
               </div>
               <div className="mt-5 flex items-center justify-between gap-4 border-t border-panel-border pt-3 text-xs text-muted"><span>Uptime <strong className="ml-1 font-medium text-foreground">{formatUptime(server.uptime_seconds)}</strong></span><span className="truncate">Seen {formatTime(server.last_seen_at)}</span></div>
-            </Link>)}</div>
+              {(server.ssh_host || tunnelRows.some((profile) => profile.server_id === server.id || profile.id === server.id)) && <Button className="mt-3 h-8 w-full text-xs" variant="secondary" disabled={terminalServerID === server.id} onClick={() => openServerTerminal(server)}><Terminal className="h-3.5 w-3.5" />{terminalServerID === server.id ? "Opening..." : "Open terminal"}</Button>}
+            </article>)}</div>
           </section>}
         </div>
     </DashboardShell>

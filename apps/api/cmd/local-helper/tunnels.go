@@ -62,7 +62,8 @@ func (s *tunnelStore) save(profile tunnelProfile) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for index := range s.profiles {
-		if s.profiles[index].ID == profile.ID {
+		if s.profiles[index].ID == profile.ID || (profile.ServerID != "" && s.profiles[index].ServerID == profile.ServerID) {
+			profile.ID = s.profiles[index].ID
 			s.profiles[index] = profile
 			return s.write()
 		}
@@ -142,7 +143,7 @@ func stopTunnel(profile tunnelProfile, controlPath string) error {
 	return nil
 }
 
-func runTunnels(repoRoot string, store *tunnelStore, onlyID string) error {
+func runTunnels(repoRoot string, store *tunnelStore, onlyIDs map[string]bool) error {
 	script := filepath.Join(repoRoot, "deployments", "scripts", "reverse-tunnel-ssh.sh")
 	if _, err := os.Stat(script); err != nil {
 		return err
@@ -152,7 +153,7 @@ func runTunnels(repoRoot string, store *tunnelStore, onlyID string) error {
 	}
 	var failed int
 	for _, profile := range store.all() {
-		if onlyID != "" && profile.ID != onlyID {
+		if len(onlyIDs) > 0 && !onlyIDs[profile.ID] && !onlyIDs[profile.ServerID] {
 			continue
 		}
 		controlPath := store.controlPath(profile.ID)
